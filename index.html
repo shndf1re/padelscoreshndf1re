@@ -100,6 +100,16 @@
       cursor: not-allowed;
     }
 
+    /* FOOTER SETUP */
+    .setup-footer {
+      text-align: center;
+      padding: 16px 0 8px 0;
+      color: var(--text-muted);
+      font-size: 0.75rem;
+      font-weight: 500;
+      letter-spacing: 0.5px;
+    }
+
     /* SCOREBOARD SCREEN */
     .header-info { 
       text-align: center; 
@@ -160,7 +170,6 @@
       width: fit-content;
     }
 
-    /* KONTROL SERVIS & FOUL */
     .serve-actions {
       display: flex;
       gap: 4px;
@@ -317,6 +326,11 @@
       </div>
 
       <button class="btn" style="margin-top: 10px;" onclick="startGame()">Mulai Pertandingan</button>
+      
+      <!-- FOOTER CREATED BY -->
+      <div class="setup-footer">
+        Created by shndf1re 2026
+      </div>
     </div>
   </div>
 
@@ -400,7 +414,7 @@
       nameB: 'Tim B',
       initialServer: 'A',
       server: 'A',
-      serveAttempt: 1, // 1 = 1st Serve, 2 = 2nd Serve
+      serveAttempt: 1,
       courtSide: 'KANAN',
       goldenCustomSide: null,
       history: []
@@ -464,7 +478,6 @@
       state.courtSide = (state.courtSide === 'KANAN') ? 'KIRI' : 'KANAN';
     }
 
-    // HANDLER FAULT PERTAMA (PINDAH KE 2ND SERVE)
     function handleFault() {
       if (state.serveAttempt === 1) {
         triggerHaptic();
@@ -474,11 +487,9 @@
       }
     }
 
-    // HANDLER DOUBLE FAULT (AKAN ADD POINT UNTUK TIM LAWAN)
     function handleDoubleFault() {
       if (state.serveAttempt === 2) {
         triggerHaptic();
-        // Poin diberikan ke tim lawan yang sedang TIDAK servis
         const pointWinner = (state.server === 'A') ? 'B' : 'A';
         addPoint(pointWinner);
       }
@@ -496,7 +507,7 @@
       saveHistory();
 
       state.goldenCustomSide = null;
-      state.serveAttempt = 1; // Otomatis reset ke 1st Serve tiap poin bertambah
+      state.serveAttempt = 1;
 
       if (state.mode === 'TENIS') {
         handleTennisScoring(team);
@@ -628,7 +639,6 @@
       document.getElementById('serve-box-a').className = `server-box ${isServA ? 'active' : ''}`;
       document.getElementById('serve-box-b').className = `server-box ${!isServA ? 'active' : ''}`;
 
-      // INDIKATOR 1ST / 2ND SERVE & TOMBOL FOUL
       const serveLabel = (state.serveAttempt === 1) ? '1st Serve' : '2nd Serve';
       const serveClass = (state.serveAttempt === 1) ? 'serve-attempt-btn serve-1st' : 'serve-attempt-btn serve-2nd';
       const isSecondServe = (state.serveAttempt === 2);
@@ -643,7 +653,6 @@
       btnB.innerText = serveLabel;
       btnB.className = serveClass;
 
-      // Tombol Foul hanya AKTIF jika sedang di kondisi 2nd Serve
       foulA.disabled = !isSecondServe;
       foulB.disabled = !isSecondServe;
 
