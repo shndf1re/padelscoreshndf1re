@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePadelScore, ScoreState, DeuceRule } from '@/lib/padelEngine';
-import { RotateCcw, Type, Trophy } from 'lucide-react';
+import { RotateCcw, Type, Trophy, History } from 'lucide-react';
 
 export default function RefereeControl() {
   const params = useParams();
@@ -29,6 +29,7 @@ export default function RefereeControl() {
     winnerTeam: 0,
   });
 
+  const [pointHistory, setPointHistory] = useState<any[]>([]);
   const [historyStack, setHistoryStack] = useState<ScoreState[]>([]);
   const [selectedFont, setSelectedFont] = useState('Teko');
   const [syncError, setSyncError] = useState<string | null>(null);
@@ -69,13 +70,14 @@ export default function RefereeControl() {
           winnerTeam: sData.winner_team || 0,
         });
         if (sData.overlay_font) setSelectedFont(sData.overlay_font);
+        if (sData.point_history) setPointHistory(sData.point_history);
       }
     };
 
     fetchMatch();
   }, [matchId]);
 
-  const syncToSupabase = async (updated: ScoreState, fontName = selectedFont) => {
+  const syncToSupabase = async (updated: ScoreState, newHistory = pointHistory, fontName = selectedFont) => {
     const { error } = await supabase
       .from('match_states')
       .upsert(
@@ -93,17 +95,15 @@ export default function RefereeControl() {
           is_star_point: updated.isStarPoint,
           is_finished: updated.isFinished,
           winner_team: updated.winnerTeam,
+          point_history: newHistory,
           overlay_font: fontName,
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'match_id' }
       );
 
-    if (error) {
-      setSyncError(error.message);
-    } else {
-      setSyncError(null);
-    }
+    if (error) setSyncError(error.message);
+    else setSyncError(null);
   };
 
   const updateScore = async (scoringTeam: 1 | 2) => {
@@ -123,27 +123,38 @@ export default function RefereeControl() {
       gamesPerSet,
       totalSets
     );
+
+    // Tambah Log Alur Poin
+    const logItem = {
+      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      set: updated.currentSet + 1,
+      scoringTeam,
+      scoreText: `${updated.team1Points} - ${updated.team2Points}`,
+      gamesText: `Set ${updated.currentSet + 1}: (${updated.team1Games[updated.currentSet]} - ${updated.team2Games[updated.currentSet]})`,
+    };
+
+    const updatedHistory = [logItem, ...pointHistory].slice(0, 50); // Simpan 50 poin terakhir
+    setPointHistory(updatedHistory);
+
     setMatchState(updated);
-    await syncToSupabase(updated);
+    await syncToSupabase(updated, updatedHistory);
   };
 
   const handleUndo = async () => {
     if (historyStack.length === 0) return;
     const previousState = historyStack[historyStack.length - 1];
-    setHistoryStack((prev) => prev.slice(0, prev.length - 1));
-    setMatchState(previousState);
-    await syncToSupabase(previousState);
-  };
+    const previousHistory = pointHistory.slice(1);
 
-  const changeFont = async (font: string) => {
-    setSelectedFont(font);
-    await syncToSupabase(matchState, font);
+    setHistoryStack((prev) => prev.slice(0, prev.length - 1));
+    setPointHistory(previousHistory);
+    setMatchState(previousState);
+    await syncToSupabase(previousState, previousHistory);
   };
 
   if (!matchInfo) return <div className="p-6 text-center text-white">Memuat Panel Wasit...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none">
+    <div className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none space-y-4">
       <div className="space-y-3">
         <div className="flex justify-between items-center bg-slate-900 p-3 rounded-2xl border border-white/10">
           <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">WASIT DASHBOARD</span>
@@ -183,7 +194,10 @@ export default function RefereeControl() {
           </span>
           <select
             value={selectedFont}
-            onChange={(e) => changeFont(e.target.value)}
+            onChange={(e) => {
+              setSelectedFont(e.target.value);
+              syncToSupabase(matchState, pointHistory, e.target.value);
+            }}
             className="bg-slate-950 border border-white/10 text-white rounded-lg px-2 py-1 focus:outline-none"
           >
             <option value="Teko">Teko (TV Broadcast)</option>
@@ -194,6 +208,7 @@ export default function RefereeControl() {
         </div>
       </div>
 
+      {/* Ringkasan Set */}
       <div className="bg-slate-900/80 p-3 rounded-2xl border border-white/10 text-xs flex justify-around text-center my-2">
         <div>
           <span className="text-[10px] text-slate-500 block uppercase font-bold">Set Sekarang</span>
@@ -208,6 +223,7 @@ export default function RefereeControl() {
         </div>
       </div>
 
+      {/* Area Tombol Poin */}
       <div className="grid grid-cols-2 gap-4 my-2">
         <button
           onClick={() => updateScore(1)}
@@ -258,33 +274,25 @@ export default function RefereeControl() {
         </button>
       </div>
 
-      <div className="bg-slate-900 p-3 rounded-2xl border border-white/10 flex justify-between items-center text-xs">
-        <span className="text-slate-400 font-semibold">Giliran Servis:</span>
-        <div className="flex gap-2">
-          <button
-            onClick={() => {
-              const updated = { ...matchState, currentServer: 1 as const };
-              setMatchState(updated);
-              syncToSupabase(updated);
-            }}
-            className={`px-3 py-1.5 rounded-lg font-bold ${
-              matchState.currentServer === 1 ? 'bg-emerald-500 text-black' : 'bg-white/5 text-slate-400'
-            }`}
-          >
-            Tim A 🎾
-          </button>
-          <button
-            onClick={() => {
-              const updated = { ...matchState, currentServer: 2 as const };
-              setMatchState(updated);
-              syncToSupabase(updated);
-            }}
-            className={`px-3 py-1.5 rounded-lg font-bold ${
-              matchState.currentServer === 2 ? 'bg-cyan-500 text-black' : 'bg-white/5 text-slate-400'
-            }`}
-          >
-            Tim B 🎾
-          </button>
+      {/* Log Alur Poin Terakhir */}
+      <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/10 space-y-2">
+        <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
+          <History className="w-3.5 h-3.5 text-cyan-400" /> Alur Poin Terakhir
+        </span>
+        <div className="max-h-28 overflow-y-auto space-y-1 text-xs pr-1">
+          {pointHistory.length === 0 ? (
+            <p className="text-slate-600 text-[11px]">Belum ada alur poin tercatat.</p>
+          ) : (
+            pointHistory.slice(0, 5).map((log, idx) => (
+              <div key={idx} className="flex justify-between items-center bg-slate-950 px-2.5 py-1 rounded-lg text-[11px]">
+                <span className="text-slate-500">{log.time}</span>
+                <span className={log.scoringTeam === 1 ? 'text-emerald-400 font-bold' : 'text-cyan-400 font-bold'}>
+                  +1 {log.scoringTeam === 1 ? 'Tim A' : 'Tim B'}
+                </span>
+                <span className="text-slate-300 font-mono font-bold">{log.scoreText}</span>
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
