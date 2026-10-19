@@ -4,11 +4,11 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePadelScore, ScoreState, DeuceRule } from '@/lib/padelEngine';
-import { RotateCcw, Type, Trophy, CheckCircle2 } from 'lucide-react';
+import { RotateCcw, Type, Trophy } from 'lucide-react';
 
 export default function RefereeControl() {
   const params = useParams();
-  const matchId = params.matchId as string;
+  const matchId = params?.matchId as string;
 
   const [matchInfo, setMatchInfo] = useState<any>(null);
   const [matchState, setMatchState] = useState<ScoreState>({
@@ -31,15 +31,25 @@ export default function RefereeControl() {
 
   const [historyStack, setHistoryStack] = useState<ScoreState[]>([]);
   const [selectedFont, setSelectedFont] = useState('Teko');
+  const [syncError, setSyncError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!matchId) return;
 
     const fetchMatch = async () => {
-      const { data: mData } = await supabase.from('matches').select('*').eq('id', matchId).single();
+      const { data: mData } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('id', matchId)
+        .single();
       if (mData) setMatchInfo(mData);
 
-      const { data: sData } = await supabase.from('match_states').select('*').eq('match_id', matchId).single();
+      const { data: sData } = await supabase
+        .from('match_states')
+        .select('*')
+        .eq('match_id', matchId)
+        .single();
+
       if (sData) {
         setMatchState({
           team1Points: sData.team1_points || '0',
@@ -66,25 +76,34 @@ export default function RefereeControl() {
   }, [matchId]);
 
   const syncToSupabase = async (updated: ScoreState, fontName = selectedFont) => {
-    await supabase
+    const { error } = await supabase
       .from('match_states')
-      .update({
-        team1_points: updated.team1Points,
-        team2_points: updated.team2Points,
-        team1_games: updated.team1Games,
-        team2_games: updated.team2Games,
-        team1_sets_won: updated.team1SetsWon,
-        team2_sets_won: updated.team2SetsWon,
-        current_set: updated.currentSet,
-        current_server: updated.currentServer,
-        is_break_point: updated.isBreakPoint,
-        is_star_point: updated.isStarPoint,
-        is_finished: updated.isFinished,
-        winner_team: updated.winnerTeam,
-        overlay_font: fontName,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('match_id', matchId);
+      .upsert(
+        {
+          match_id: matchId,
+          team1_points: updated.team1Points,
+          team2_points: updated.team2Points,
+          team1_games: updated.team1Games,
+          team2_games: updated.team2Games,
+          team1_sets_won: updated.team1SetsWon,
+          team2_sets_won: updated.team2SetsWon,
+          current_set: updated.currentSet,
+          current_server: updated.currentServer,
+          is_break_point: updated.isBreakPoint,
+          is_star_point: updated.isStarPoint,
+          is_finished: updated.isFinished,
+          winner_team: updated.winnerTeam,
+          overlay_font: fontName,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'match_id' }
+      );
+
+    if (error) {
+      setSyncError(error.message);
+    } else {
+      setSyncError(null);
+    }
   };
 
   const updateScore = async (scoringTeam: 1 | 2) => {
@@ -96,7 +115,14 @@ export default function RefereeControl() {
     const gamesPerSet = matchInfo?.games_per_set || 6;
     const totalSets = matchInfo?.total_sets || 3;
 
-    const updated = calculatePadelScore(matchState, scoringTeam, mode, deuceRule as DeuceRule, gamesPerSet, totalSets);
+    const updated = calculatePadelScore(
+      matchState,
+      scoringTeam,
+      mode,
+      deuceRule as DeuceRule,
+      gamesPerSet,
+      totalSets
+    );
     setMatchState(updated);
     await syncToSupabase(updated);
   };
@@ -114,7 +140,7 @@ export default function RefereeControl() {
     await syncToSupabase(matchState, font);
   };
 
-  if (!matchInfo) return <div className="p-6 text-center text-white">Loading Control Panel...</div>;
+  if (!matchInfo) return <div className="p-6 text-center text-white">Memuat Panel Wasit...</div>;
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none">
@@ -130,7 +156,12 @@ export default function RefereeControl() {
           </button>
         </div>
 
-        {/* Status Match Finished */}
+        {syncError && (
+          <div className="bg-rose-500/20 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold">
+            ⚠️ Gagal sync ke database: {syncError}
+          </div>
+        )}
+
         {matchState.isFinished && (
           <div className="bg-amber-500/20 border border-amber-500/40 p-4 rounded-2xl text-center space-y-2">
             <Trophy className="w-8 h-8 text-amber-400 mx-auto" />
@@ -143,13 +174,6 @@ export default function RefereeControl() {
                   : matchInfo.team2_name || `${matchInfo.team2_p1_name} / ${matchInfo.team2_p2_name}`}
               </span>
             </p>
-            <a
-              href={`/match/${matchId}`}
-              target="_blank"
-              className="inline-block bg-amber-500 text-black font-bold px-4 py-2 rounded-xl text-xs mt-2"
-            >
-              Lihat Ringkasan Hasil
-            </a>
           </div>
         )}
 
@@ -170,7 +194,6 @@ export default function RefereeControl() {
         </div>
       </div>
 
-      {/* Area Skor Per Set */}
       <div className="bg-slate-900/80 p-3 rounded-2xl border border-white/10 text-xs flex justify-around text-center my-2">
         <div>
           <span className="text-[10px] text-slate-500 block uppercase font-bold">Set Sekarang</span>
@@ -185,7 +208,6 @@ export default function RefereeControl() {
         </div>
       </div>
 
-      {/* Tombol Skor */}
       <div className="grid grid-cols-2 gap-4 my-2">
         <button
           onClick={() => updateScore(1)}
@@ -193,7 +215,11 @@ export default function RefereeControl() {
           className="h-64 rounded-3xl bg-slate-900 border-2 border-emerald-500/40 active:border-emerald-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
         >
           <div>
-            {matchInfo.team1_name && <span className="text-xs font-bold text-emerald-400 uppercase block mb-1">{matchInfo.team1_name}</span>}
+            {matchInfo.team1_name && (
+              <span className="text-xs font-bold text-emerald-400 uppercase block mb-1">
+                {matchInfo.team1_name}
+              </span>
+            )}
             <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p1_name}</p>
             <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p2_name}</p>
           </div>
@@ -213,7 +239,11 @@ export default function RefereeControl() {
           className="h-64 rounded-3xl bg-slate-900 border-2 border-cyan-500/40 active:border-cyan-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
         >
           <div>
-            {matchInfo.team2_name && <span className="text-xs font-bold text-cyan-400 uppercase block mb-1">{matchInfo.team2_name}</span>}
+            {matchInfo.team2_name && (
+              <span className="text-xs font-bold text-cyan-400 uppercase block mb-1">
+                {matchInfo.team2_name}
+              </span>
+            )}
             <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p1_name}</p>
             <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p2_name}</p>
           </div>
@@ -237,7 +267,9 @@ export default function RefereeControl() {
               setMatchState(updated);
               syncToSupabase(updated);
             }}
-            className={`px-3 py-1.5 rounded-lg font-bold ${matchState.currentServer === 1 ? 'bg-emerald-500 text-black' : 'bg-white/5 text-slate-400'}`}
+            className={`px-3 py-1.5 rounded-lg font-bold ${
+              matchState.currentServer === 1 ? 'bg-emerald-500 text-black' : 'bg-white/5 text-slate-400'
+            }`}
           >
             Tim A 🎾
           </button>
@@ -247,7 +279,9 @@ export default function RefereeControl() {
               setMatchState(updated);
               syncToSupabase(updated);
             }}
-            className={`px-3 py-1.5 rounded-lg font-bold ${matchState.currentServer === 2 ? 'bg-cyan-500 text-black' : 'bg-white/5 text-slate-400'}`}
+            className={`px-3 py-1.5 rounded-lg font-bold ${
+              matchState.currentServer === 2 ? 'bg-cyan-500 text-black' : 'bg-white/5 text-slate-400'
+            }`}
           >
             Tim B 🎾
           </button>
