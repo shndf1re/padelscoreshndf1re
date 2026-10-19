@@ -16,7 +16,11 @@ export default function RootLayout({
       <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
         <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
-        <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Teko:wght@600;700&display=swap" rel="stylesheet" />
+        {/* Pemuat Google Fonts Lengkap untuk Custom Scoreboard OBS Overlay */}
+        <link
+          href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;600;700;800&family=Montserrat:wght@700;800;900&family=Outfit:wght@600;700;800;900&family=Plus+Jakarta+Sans:wght@400;600;700;800&family=Roboto:wght@500;700;900&family=Teko:wght@600;700&display=swap"
+          rel="stylesheet"
+        />
       </head>
       <body className="bg-slate-950 text-slate-100 font-sans antialiased selection:bg-emerald-500 selection:text-black">
         {children}
