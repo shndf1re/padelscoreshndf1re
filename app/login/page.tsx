@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import { Lock, Mail, Key, ShieldCheck } from 'lucide-react';
+import { Lock, Mail, Key } from 'lucide-react';
 
 export default function LoginPage() {
   const [email, setEmail] = useState('');
@@ -20,7 +20,7 @@ export default function LoginPage() {
       if (isSignUp) {
         const { error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
-        alert('Registrasi berhasil! Silakan login.');
+        alert('Registrasi berhasil! Silakan login dengan akun Anda.');
         setIsSignUp(false);
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
@@ -42,10 +42,10 @@ export default function LoginPage() {
             <Lock className="w-6 h-6" />
           </div>
           <h1 className="text-2xl font-bold text-white">
-            {isSignUp ? 'Buat Akun Penyelenggara' : 'Login Penyelenggara Turnamen'}
+            {isSignUp ? 'Buat Akun Penyelenggara' : 'Login Manager Turnamen'}
           </h1>
           <p className="text-xs text-slate-400">
-            Kelola turnamen, atur sistem poin, undang admin/moderator, dan acak bracket.
+            Masuk untuk membuat turnamen, mengacak bracket, dan mengundang admin/moderator.
           </p>
         </div>
 
@@ -91,6 +91,7 @@ export default function LoginPage() {
 
         <div className="text-center pt-2 border-t border-white/5">
           <button
+            type="button"
             onClick={() => setIsSignUp(!isSignUp)}
             className="text-xs text-cyan-400 hover:underline font-semibold"
           >
