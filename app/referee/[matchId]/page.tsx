@@ -1,9 +1,40 @@
 'use client';
 
+// Mencegah Next.js mencoba mem-prerender halaman statis saat build Vercel
+export const dynamic = 'force-dynamic';
+
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useParams, useRouter } from 'next/navigation';
 import { RotateCcw, Award, ChevronLeft, RefreshCw, Zap } from 'lucide-react';
+
+interface MatchData {
+  id: string;
+  team1_name?: string;
+  team1_p1_name?: string;
+  team1_p2_name?: string;
+  team2_name?: string;
+  team2_p1_name?: string;
+  team2_p2_name?: string;
+  games_per_set?: number;
+  total_sets?: number;
+  deuce_rule?: string;
+}
+
+interface MatchStateData {
+  match_id: string;
+  team1_points: string;
+  team2_points: string;
+  team1_games: number[];
+  team2_games: number[];
+  team1_sets_won: number;
+  team2_sets_won: number;
+  current_set: number;
+  deuce_count?: number;
+  is_star_point?: boolean;
+  is_finished: boolean;
+  winner_team: number;
+}
 
 export default function RefereePanel() {
   const routeParams = useParams();
@@ -12,11 +43,10 @@ export default function RefereePanel() {
 
   const router = useRouter();
 
-  const [match, setMatch] = useState<any>(null);
-  const [state, setState] = useState<any>(null);
+  const [match, setMatch] = useState<MatchData | null>(null);
+  const [state, setState] = useState<MatchStateData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  // Fungsi Fetch Data Pertandingan
   const fetchMatchData = useCallback(async () => {
     if (!matchId) return;
 
@@ -32,8 +62,8 @@ export default function RefereePanel() {
       .eq('match_id', matchId)
       .single();
 
-    if (matchData) setMatch(matchData);
-    if (stateData) setState(stateData);
+    if (matchData) setMatch(matchData as MatchData);
+    if (stateData) setState(stateData as MatchStateData);
     setLoading(false);
   }, [matchId]);
 
@@ -42,14 +72,13 @@ export default function RefereePanel() {
 
     if (!matchId) return;
 
-    // Listener Realtime Supabase
     const channel = supabase
       .channel(`referee-${matchId}`)
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'match_states', filter: `match_id=eq.${matchId}` },
         (payload: any) => {
-          if (payload.new) setState(payload.new);
+          if (payload && payload.new) setState(payload.new as MatchStateData);
         }
       )
       .subscribe();
@@ -78,18 +107,15 @@ export default function RefereePanel() {
   const games1 = state.team1_games?.[currentSet] || 0;
   const games2 = state.team2_games?.[currentSet] || 0;
 
-  // Cek apakah mode Tie-Break aktif
   const isTieBreak =
     (targetGames === 6 && games1 === 6 && games2 === 6) ||
     (targetGames === 4 && games1 === 4 && games2 === 4);
 
-  // Total poin Tie-Break untuk indikator rotasi tempat
   const tbP1 = parseInt(state.team1_points, 10) || 0;
   const tbP2 = parseInt(state.team2_points, 10) || 0;
   const totalTbPoints = tbP1 + tbP2;
   const isSwitchSideNext = isTieBreak && totalTbPoints > 0 && totalTbPoints % 6 === 0;
 
-  // Logika Penambahan Poin Wasit
   const addPoint = async (team: 1 | 2) => {
     if (state.is_finished) return;
 
@@ -105,7 +131,6 @@ export default function RefereePanel() {
     let isFinished = false;
     let winnerTeam = 0;
 
-    // --- 1. MODE TIE-BREAK (Poin 1, 2, 3...) ---
     if (isTieBreak) {
       let score1 = parseInt(p1, 10) || 0;
       let score2 = parseInt(p2, 10) || 0;
@@ -123,9 +148,7 @@ export default function RefereePanel() {
         p1 = '0';
         p2 = '0';
       }
-    }
-    // --- 2. MODE SKOR TRADISIONAL (15, 30, 40) ---
-    else {
+    } else {
       if (team === 1) {
         if (p1 === '0') p1 = '15';
         else if (p1 === '15') p1 = '30';
@@ -221,7 +244,6 @@ export default function RefereePanel() {
       }
     }
 
-    // --- CEK PEMENANG SET & MATCH ---
     const curG1 = g1Array[currentSet];
     const curG2 = g2Array[currentSet];
 
@@ -252,7 +274,6 @@ export default function RefereePanel() {
       }
     }
 
-    // Update ke Database Supabase
     await supabase
       .from('match_states')
       .update({
@@ -272,7 +293,6 @@ export default function RefereePanel() {
       .eq('match_id', matchId);
   };
 
-  // Reset Skor Match
   const resetScore = async () => {
     if (!confirm('Apakah kamu yakin ingin mereset skor pertandingan ini?')) return;
 
@@ -297,7 +317,6 @@ export default function RefereePanel() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none">
-      {/* Header Info Match */}
       <div className="space-y-3">
         <div className="flex justify-between items-center bg-slate-900 p-3 rounded-2xl border border-white/10">
           <button onClick={() => router.back()} className="text-slate-400 hover:text-white p-1">
@@ -316,14 +335,12 @@ export default function RefereePanel() {
           </button>
         </div>
 
-        {/* Banner Peringatan Pergantian Sisi Lapangan pada Tie-Break */}
         {isSwitchSideNext && (
           <div className="bg-amber-500/20 border border-amber-500/40 p-3 rounded-2xl text-center flex items-center justify-center gap-2 animate-pulse text-amber-300 font-extrabold text-xs">
             <RefreshCw className="w-4 h-4" /> PERGANTIAN SISI LAPANGAN (POIN {totalTbPoints})
           </div>
         )}
 
-        {/* Display Banner Status Jika Match Selesai */}
         {state.is_finished && (
           <div className="bg-emerald-500/20 border border-emerald-500/50 p-4 rounded-2xl text-center space-y-1 animate-bounce">
             <Award className="w-8 h-8 text-emerald-400 mx-auto" />
@@ -337,16 +354,13 @@ export default function RefereePanel() {
           </div>
         )}
 
-        {/* Badge Indicator STAR POINT */}
         {state.is_star_point && !state.is_finished && (
           <div className="bg-yellow-500/20 border border-yellow-500/50 p-2.5 rounded-2xl text-center flex items-center justify-center gap-2 text-yellow-300 font-black text-xs">
             <Zap className="w-4 h-4 fill-yellow-300" /> STAR POINT (POIN PENENTU GAME)
           </div>
         )}
 
-        {/* Indicator Board Skor Games */}
         <div className="grid grid-cols-2 gap-3 bg-slate-900 p-4 rounded-3xl border border-white/10">
-          {/* Tim 1 */}
           <div className="space-y-1 text-center">
             <span className="text-[10px] text-slate-400 font-bold block truncate">
               {match.team1_p1_name} / {match.team1_p2_name}
@@ -357,7 +371,6 @@ export default function RefereePanel() {
             </div>
           </div>
 
-          {/* Tim 2 */}
           <div className="space-y-1 text-center border-l border-white/10">
             <span className="text-[10px] text-slate-400 font-bold block truncate">
               {match.team2_p1_name} / {match.team2_p2_name}
@@ -370,7 +383,6 @@ export default function RefereePanel() {
         </div>
       </div>
 
-      {/* Tombol Input Poin Raksasa */}
       <div className="grid grid-cols-1 gap-4 my-6">
         <button
           onClick={() => addPoint(1)}
@@ -395,7 +407,6 @@ export default function RefereePanel() {
         </button>
       </div>
 
-      {/* Info Aturan Ringkas */}
       <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 text-[11px] text-slate-400 text-center space-y-1">
         <p>
           Deuce Rule:{' '}
