@@ -9,70 +9,77 @@ export default function OBSOverlay() {
   const matchId = params?.matchId as string;
   const [matchData, setMatchData] = useState<any>(null);
   const [matchState, setMatchState] = useState<any>(null);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [statusText, setStatusText] = useState<string>('Menghubungkan Overlay...');
 
   useEffect(() => {
     if (!matchId) return;
 
-    const loadData = async () => {
-      // 1. Ambil Data Match Utama
-      const { data: mData, error: mErr } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('id', matchId)
-        .single();
+    let isMounted = true;
 
-      if (mErr || !mData) {
-        setErrorMsg('Match tidak ditemukan di database');
-        return;
+    const fetchLatestState = async () => {
+      try {
+        if (!matchData) {
+          const { data: mData } = await supabase
+            .from('matches')
+            .select('*')
+            .eq('id', matchId)
+            .single();
+          if (mData && isMounted) setMatchData(mData);
+        }
+
+        const { data: sData } = await supabase
+          .from('match_states')
+          .select('*')
+          .eq('match_id', matchId)
+          .single();
+
+        if (sData && isMounted) {
+          setMatchState(sData);
+        }
+      } catch (err) {
+        console.error('Error fetching overlay data:', err);
       }
-      setMatchData(mData);
-
-      // 2. Ambil Data State Skor (PERBAIKAN: Gunakan match_id, bukan id)
-      const { data: sData, error: sErr } = await supabase
-        .from('match_states')
-        .select('*')
-        .eq('match_id', matchId)
-        .single();
-
-      if (sErr || !sData) {
-        setErrorMsg('State skor tidak ditemukan');
-        return;
-      }
-      setMatchState(sData);
     };
 
-    loadData();
+    fetchLatestState();
 
-    // 3. Realtime Subscription
+    // Polling fallback setiap 1.5 detik agar pasti terhubung
+    const intervalId = setInterval(fetchLatestState, 1500);
+
+    // Realtime listener
     const channel = supabase
-      .channel(`obs-stream-${matchId}`)
+      .channel(`obs-room-${matchId}`)
       .on(
         'postgres_changes',
-        { event: '*', schema: 'public', table: 'match_states', filter: `match_id=eq.${matchId}` },
+        {
+          event: '*',
+          schema: 'public',
+          table: 'match_states',
+          filter: `match_id=eq.${matchId}`,
+        },
         (payload) => {
-          if (payload.new) setMatchState(payload.new);
+          if (payload.new && isMounted) {
+            setMatchState(payload.new);
+          }
         }
       )
-      .subscribe();
+      .subscribe((status) => {
+        if (status === 'SUBSCRIBED' && isMounted) {
+          setStatusText('Terhubung (Realtime)');
+        }
+      });
 
     return () => {
+      isMounted = false;
+      clearInterval(intervalId);
       supabase.removeChannel(channel);
     };
   }, [matchId]);
 
-  if (errorMsg) {
-    return (
-      <div className="bg-transparent text-red-400 p-4 font-mono text-sm">
-        [Overlay Error]: {errorMsg} (Pastikan Match ID valid)
-      </div>
-    );
-  }
-
-  if (!matchState || !matchData) {
+  if (!matchData || !matchState) {
     return (
       <div className="bg-transparent text-white p-4 font-mono text-sm">
-        Connecting Stream Overlay...
+        {statusText}
       </div>
     );
   }
@@ -83,7 +90,7 @@ export default function OBSOverlay() {
     <div className="w-full h-screen bg-transparent flex items-end p-8" style={{ fontFamily: `'${fontStyle}', sans-serif` }}>
       <div className="bg-slate-950/90 backdrop-blur-xl text-white rounded-2xl p-4 border border-white/20 shadow-2xl flex items-center gap-6 min-w-[700px] relative overflow-hidden">
         
-        {/* Badges Indikator Siaran */}
+        {/* Badges Indikator */}
         <div className="absolute -top-3 left-6 flex gap-2">
           {matchState.is_finished && (
             <span className="bg-amber-500 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
