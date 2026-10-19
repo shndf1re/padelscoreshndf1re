@@ -1,73 +1,137 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 
-export default function OBSOverlay({ params }: { params: { matchId: string } }) {
+export default function OBSOverlay() {
+  const params = useParams();
+  const matchId = params.matchId as string;
+  const [matchData, setMatchData] = useState<any>(null);
   const [matchState, setMatchState] = useState<any>(null);
 
   useEffect(() => {
-    // 1. Fetch data awal
-    const fetchState = async () => {
-      const { data } = await supabase
+    if (!matchId) return;
+
+    const fetchData = async () => {
+      const { data: mData } = await supabase
+        .from('matches')
+        .select('*')
+        .eq('id', matchId)
+        .single();
+      if (mData) setMatchData(mData);
+
+      const { data: sData } = await supabase
         .from('match_states')
         .select('*')
-        .eq('match_id', params.matchId)
+        .eq('match_id', matchId)
         .single();
-      if (data) setMatchState(data);
+      if (sData) setMatchState(sData);
     };
 
-    fetchState();
+    fetchData();
 
-    // 2. Realtime Listener dari Supabase
+    // Realtime Listener untuk perubahan skor & status
     const channel = supabase
-      .channel(`obs-match-${params.matchId}`)
+      .channel(`obs-realtime-${matchId}`)
       .on(
         'postgres_changes',
-        { event: 'UPDATE', schema: 'public', table: 'match_states', filter: `match_id=eq.${params.matchId}` },
-        (payload) => {
-          setMatchState(payload.new);
-        }
+        { event: 'UPDATE', schema: 'public', table: 'match_states', filter: `match_id=eq.${matchId}` },
+        (payload) => setMatchState(payload.new)
       )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [params.matchId]);
+  }, [matchId]);
 
-  if (!matchState) return <div className="bg-transparent text-white p-4">Loading Overlay...</div>;
+  if (!matchState || !matchData) return <div className="bg-transparent text-white p-4 font-mono">Connecting Broadcast...</div>;
 
-  const fontClass = matchState.overlay_font || 'sans-serif';
+  const fontStyle = matchState.overlay_font || 'Teko';
 
   return (
-    <div className="w-full h-screen bg-transparent flex items-end p-8 font-sans">
-      {/* Container Overlay Scoreboard */}
-      <div 
-        className="bg-black/80 backdrop-blur-md text-white rounded-xl p-4 shadow-2xl border border-white/20 flex items-center gap-6 min-w-[500px]"
-        style={{ fontFamily: fontClass }}
-      >
-        {/* Indikator Badge Status */}
-        <div className="flex flex-col gap-1 text-xs font-bold uppercase">
-          {matchState.is_break_point && <span className="bg-red-600 px-2 py-0.5 rounded text-white animate-pulse">Break Point</span>}
-          {matchState.is_star_point && <span className="bg-yellow-500 px-2 py-0.5 rounded text-black">Star Point</span>}
+    <div className="w-full h-screen bg-transparent flex items-end p-8" style={{ fontFamily: `'${fontStyle}', sans-serif` }}>
+      {/* Premier Padel Style Scoreboard Bar */}
+      <div className="bg-slate-950/90 backdrop-blur-xl text-white rounded-2xl p-4 border border-white/20 shadow-2xl flex items-center gap-6 min-w-[620px] relative overflow-hidden">
+        
+        {/* Logo Turnamen */}
+        {matchData.tournament_logo && (
+          <div className="w-12 h-12 flex items-center justify-center border-r border-white/10 pr-4">
+            <img src={matchData.tournament_logo} alt="Tournament" className="max-h-full max-w-full object-contain" />
+          </div>
+        )}
+
+        {/* Live Badges Display */}
+        <div className="absolute -top-3 left-6 flex gap-2">
+          {matchState.is_break_point && (
+            <span className="bg-red-600 text-white text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg animate-bounce">
+              🔥 BREAK POINT
+            </span>
+          )}
+          {matchState.is_set_point && (
+            <span className="bg-amber-500 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
+              ⚡ SET POINT
+            </span>
+          )}
+          {matchState.is_match_point && (
+            <span className="bg-emerald-500 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
+              🏆 MATCH POINT
+            </span>
+          )}
+          {matchState.is_tournament_point && (
+            <span className="bg-purple-600 text-white text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
+              🥇 TOURNAMENT POINT
+            </span>
+          )}
+          {matchState.is_star_point && (
+            <span className="bg-cyan-400 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
+              ⭐ STAR POINT
+            </span>
+          )}
         </div>
 
-        {/* Skor Tim 1 vs Tim 2 */}
-        <div className="flex-1 flex flex-col gap-2">
-          <div className="flex justify-between items-center">
-            <span className="font-semibold text-lg flex items-center gap-2">
-              {matchState.current_server === 1 && <span>🎾</span>} Tim A
-            </span>
-            <span className="text-2xl font-bold bg-white/10 px-3 py-1 rounded">{matchState.team1_points}</span>
+        {/* Papan Skor Tim 1 vs Tim 2 */}
+        <div className="flex-1 space-y-2 mt-1">
+          {/* Tim 1 */}
+          <div className="flex justify-between items-center bg-white/5 px-4 py-2 rounded-xl">
+            <div className="flex items-center gap-3">
+              {matchData.team1_logo && (
+                <img src={matchData.team1_logo} alt="T1" className="w-7 h-7 object-contain rounded-full bg-black/40" />
+              )}
+              <span className="font-bold text-2xl tracking-wide">
+                {matchData.team1_custom_name || 'Tim A'}
+              </span>
+              {matchState.current_server === 1 && <span className="text-emerald-400 text-xl animate-pulse">🎾</span>}
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-slate-400 text-xl font-bold">Set: {matchState.team1_games?.[matchState.current_set || 0] || 0}</span>
+              <span className="text-4xl font-extrabold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-4 py-0.5 rounded-lg">
+                {matchState.team1_points}
+              </span>
+            </div>
           </div>
-          <div className="flex justify-between items-center border-t border-white/10 pt-2">
-            <span className="font-semibold text-lg flex items-center gap-2">
-              {matchState.current_server === 2 && <span>🎾</span>} Tim B
-            </span>
-            <span className="text-2xl font-bold bg-white/10 px-3 py-1 rounded">{matchState.team2_points}</span>
+
+          {/* Tim 2 */}
+          <div className="flex justify-between items-center bg-white/5 px-4 py-2 rounded-xl">
+            <div className="flex items-center gap-3">
+              {matchData.team2_logo && (
+                <img src={matchData.team2_logo} alt="T2" className="w-7 h-7 object-contain rounded-full bg-black/40" />
+              )}
+              <span className="font-bold text-2xl tracking-wide">
+                {matchData.team2_custom_name || 'Tim B'}
+              </span>
+              {matchState.current_server === 2 && <span className="text-emerald-400 text-xl animate-pulse">🎾</span>}
+            </div>
+            <div className="flex items-center gap-4">
+              <span className="text-slate-400 text-xl font-bold">Set: {matchState.team2_games?.[matchState.current_set || 0] || 0}</span>
+              <span className="text-4xl font-extrabold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-4 py-0.5 rounded-lg">
+                {matchState.team2_points}
+              </span>
+            </div>
           </div>
         </div>
+
       </div>
     </div>
   );
