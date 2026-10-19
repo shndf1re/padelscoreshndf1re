@@ -100,9 +100,9 @@ export default function RefereePanel() {
   const totalSets = match.total_sets || 1;
   const deuceRule = match.deuce_rule || 'golden';
 
-  const currentSet = state.current_set || 0;
-  const games1 = state.team1_games?.[currentSet] || 0;
-  const games2 = state.team2_games?.[currentSet] || 0;
+  const activeSetIndex = state.current_set || 0;
+  const games1 = state.team1_games?.[activeSetIndex] || 0;
+  const games2 = state.team2_games?.[activeSetIndex] || 0;
 
   // Cek apakah mode Tie-Break aktif
   const isTieBreak =
@@ -121,6 +121,7 @@ export default function RefereePanel() {
 
     let p1 = state.team1_points;
     let p2 = state.team2_points;
+    let currentSet = state.current_set || 0;
     let deuceCount = state.deuce_count || 0;
     let isStarPoint = state.is_star_point || false;
 
@@ -369,7 +370,7 @@ export default function RefereePanel() {
             </span>
             <div className="text-4xl font-black text-emerald-400">{state.team1_points}</div>
             <div className="text-xs font-bold text-slate-300">
-              Games: <span className="text-white font-extrabold">{state.team1_games?.[currentSet] || 0}</span>
+              Games: <span className="text-white font-extrabold">{state.team1_games?.[activeSetIndex] || 0}</span>
             </div>
           </div>
 
@@ -379,7 +380,7 @@ export default function RefereePanel() {
             </span>
             <div className="text-4xl font-black text-cyan-400">{state.team2_points}</div>
             <div className="text-xs font-bold text-slate-300">
-              Games: <span className="text-white font-extrabold">{state.team2_games?.[currentSet] || 0}</span>
+              Games: <span className="text-white font-extrabold">{state.team2_games?.[activeSetIndex] || 0}</span>
             </div>
           </div>
         </div>
