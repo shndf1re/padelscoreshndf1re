@@ -1,8 +1,5 @@
 'use client';
 
-// Mencegah Next.js mencoba mem-prerender halaman statis saat build Vercel
-export const dynamic = 'force-dynamic';
-
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useParams, useRouter } from 'next/navigation';
@@ -107,15 +104,18 @@ export default function RefereePanel() {
   const games1 = state.team1_games?.[currentSet] || 0;
   const games2 = state.team2_games?.[currentSet] || 0;
 
+  // Cek apakah mode Tie-Break aktif
   const isTieBreak =
     (targetGames === 6 && games1 === 6 && games2 === 6) ||
     (targetGames === 4 && games1 === 4 && games2 === 4);
 
+  // Total poin Tie-Break untuk indikator rotasi tempat
   const tbP1 = parseInt(state.team1_points, 10) || 0;
   const tbP2 = parseInt(state.team2_points, 10) || 0;
   const totalTbPoints = tbP1 + tbP2;
   const isSwitchSideNext = isTieBreak && totalTbPoints > 0 && totalTbPoints % 6 === 0;
 
+  // Logika Penambahan Poin Wasit
   const addPoint = async (team: 1 | 2) => {
     if (state.is_finished) return;
 
@@ -131,6 +131,7 @@ export default function RefereePanel() {
     let isFinished = false;
     let winnerTeam = 0;
 
+    // --- 1. MODE TIE-BREAK (Poin 1, 2, 3...) ---
     if (isTieBreak) {
       let score1 = parseInt(p1, 10) || 0;
       let score2 = parseInt(p2, 10) || 0;
@@ -149,6 +150,7 @@ export default function RefereePanel() {
         p2 = '0';
       }
     } else {
+      // --- 2. MODE SKOR TRADISIONAL (15, 30, 40) ---
       if (team === 1) {
         if (p1 === '0') p1 = '15';
         else if (p1 === '15') p1 = '30';
