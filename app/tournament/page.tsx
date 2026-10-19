@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useRouter } from 'next/navigation';
-import { Trophy, GitMerge, Plus, UserPlus, Shuffle, Play, ExternalLink, LogOut, Lock, Settings2 } from 'lucide-react';
+import { Trophy, GitMerge, Plus, UserPlus, Shuffle, Play, ExternalLink, LogOut, Lock, Settings2, CheckCircle2 } from 'lucide-react';
 
 interface Participant {
   id?: string;
@@ -15,7 +15,8 @@ interface Participant {
 export default function TournamentDashboard() {
   const [currentUser, setCurrentUser] = useState<any>(null);
   const [activeTab, setActiveTab] = useState<'participants' | 'bracket' | 'admins'>('participants');
-  
+  const [tournamentId, setTournamentId] = useState<string | null>(null);
+
   // Data Peserta
   const [participants, setParticipants] = useState<Participant[]>([
     { teamName: 'Eagle Padel', p1: 'Sanyo', p2: 'Tapia' },
@@ -44,9 +45,37 @@ export default function TournamentDashboard() {
   ]);
   const [newAdminEmail, setNewAdminEmail] = useState('');
 
-  // Data Bracket Match Terintegrasi
-  const [bracketMatches, setBracketMatches] = useState<any[]>([]);
+  // Data Bracket dari Database Supabase
+  const [brackets, setBrackets] = useState<any[]>([]);
   const router = useRouter();
+
+  // Membaca Turnamen & Bracket Aktif dari Database
+  const loadActiveTournament = async () => {
+    const { data: tData } = await supabase
+      .from('tournaments')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single();
+
+    if (tData) {
+      setTournamentId(tData.id);
+      setScoringMode(tData.scoring_mode || 'traditional');
+      setDeuceRule(tData.deuce_rule || 'golden');
+      setGamesPerSet(tData.games_per_set || 6);
+      setTotalSets(tData.total_sets || 3);
+
+      const { data: bData } = await supabase
+        .from('brackets')
+        .select('*')
+        .eq('tournament_id', tData.id)
+        .order('match_index', { ascending: true });
+
+      if (bData && bData.length > 0) {
+        setBrackets(bData);
+      }
+    }
+  };
 
   useEffect(() => {
     const checkUser = async () => {
@@ -60,7 +89,113 @@ export default function TournamentDashboard() {
       }
     };
     checkUser();
+    loadActiveTournament();
+
+    // Realtime Listener untuk Otomatis Majukan Pemenang Match
+    const channel = supabase
+      .channel('tournament-live-sync')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'match_states' },
+        async (payload: any) => {
+          if (payload.new && payload.new.is_finished) {
+            await handleMatchFinishedAutoAdvance(payload.new.match_id, payload.new.winner_team);
+          }
+        }
+      )
+      .subscribe();
+
+    const intervalId = setInterval(loadActiveTournament, 3000); // Polling backup
+
+    return () => {
+      supabase.removeChannel(channel);
+      clearInterval(intervalId);
+    };
   }, []);
+
+  // Fungsi Logika Auto Advance Pemenang ke Babak Selanjutnya
+  const handleMatchFinishedAutoAdvance = async (matchId: string, winnerTeam: number) => {
+    if (!winnerTeam || winnerTeam === 0) return;
+
+    const { data: currentBracket } = await supabase
+      .from('brackets')
+      .select('*')
+      .eq('match_id', matchId)
+      .single();
+
+    if (!currentBracket || !currentBracket.next_bracket_id) return;
+
+    // Simpan status pemenang pada bracket saat ini
+    await supabase
+      .from('brackets')
+      .update({ winner_team: winnerTeam })
+      .eq('id', currentBracket.id);
+
+    // Ambil data tim pemenang
+    const winnerName = winnerTeam === 1 ? currentBracket.team1_name : currentBracket.team2_name;
+    const winnerP1 = winnerTeam === 1 ? currentBracket.team1_p1 : currentBracket.team2_p1;
+    const winnerP2 = winnerTeam === 1 ? currentBracket.team1_p2 : currentBracket.team2_p2;
+
+    // Masukkan pemenang ke slot babak berikutnya
+    const targetSlot = currentBracket.next_slot;
+    const updatePayload: any = {};
+    if (targetSlot === 1) {
+      updatePayload.team1_name = winnerName;
+      updatePayload.team1_p1 = winnerP1;
+      updatePayload.team1_p2 = winnerP2;
+    } else {
+      updatePayload.team2_name = winnerName;
+      updatePayload.team2_p1 = winnerP1;
+      updatePayload.team2_p2 = winnerP2;
+    }
+
+    await supabase.from('brackets').update(updatePayload).eq('id', currentBracket.next_bracket_id);
+
+    // Cek apakah slot babak berikutnya sudah terisi kedua timnya
+    const { data: nextBracket } = await supabase
+      .from('brackets')
+      .select('*')
+      .eq('id', currentBracket.next_bracket_id)
+      .single();
+
+    if (nextBracket && nextBracket.team1_p1 && nextBracket.team2_p1 && !nextBracket.match_id) {
+      // Buat record match baru untuk Semifinal/Final agar tombol Wasit & OBS aktif
+      const { data: newMatch } = await supabase
+        .from('matches')
+        .insert({
+          team1_name: nextBracket.team1_name,
+          team1_p1_name: nextBracket.team1_p1,
+          team1_p2_name: nextBracket.team1_p2,
+          team2_name: nextBracket.team2_name,
+          team2_p1_name: nextBracket.team2_p1,
+          team2_p2_name: nextBracket.team2_p2,
+          match_type: 'tournament',
+          scoring_mode: scoringMode,
+          deuce_rule: deuceRule,
+          games_per_set: gamesPerSet,
+          total_sets: totalSets,
+          status: 'live',
+        })
+        .select()
+        .single();
+
+      if (newMatch) {
+        await supabase.from('match_states').insert({
+          match_id: newMatch.id,
+          team1_points: '0',
+          team2_points: '0',
+          team1_games: [0, 0, 0, 0, 0],
+          team2_games: [0, 0, 0, 0, 0],
+          current_set: 0,
+          current_server: 1,
+        });
+
+        await supabase.from('brackets').update({ match_id: newMatch.id }).eq('id', nextBracket.id);
+      }
+    }
+
+    await loadActiveTournament();
+  };
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
@@ -89,36 +224,87 @@ export default function TournamentDashboard() {
     alert(`Akses Moderator berhasil ditambahkan untuk ${newAdminEmail}`);
   };
 
-  // Fungsi Hitung Nama Babak Dinamis
-  const getRoundLabel = (totalMatchesInRound: number) => {
-    if (totalMatchesInRound === 1) return 'FINAL';
-    if (totalMatchesInRound === 2) return 'SEMIFINAL';
-    if (totalMatchesInRound === 4) return 'QUARTERFINAL';
-    if (totalMatchesInRound === 8) return 'ROUND OF 16';
-    return `BABAK ${totalMatchesInRound * 2} BESAR`;
-  };
-
-  // Pengacak Bracket & Pembuatan Match dengan Rule Skoring Khusus
+  // Membuat Struktur Bracket Lengkap (Quarterfinal, Semifinal, Final) ke Database
   const generateBracket = async () => {
     if (participants.length < 2) return alert('Butuh minimal 2 tim untuk membuat bracket!');
-    
-    const shuffled = [...participants].sort(() => Math.random() - 0.5);
-    const matches = [];
-    const totalMatches = Math.floor(shuffled.length / 2);
-    const roundTitle = getRoundLabel(totalMatches);
 
-    for (let i = 0; i < shuffled.length; i += 2) {
-      if (shuffled[i + 1]) {
-        // Buat record match baru di database Supabase dengan sistem skoring pilihan
-        const { data: createdMatch } = await supabase
+    // 1. Buat Record Turnamen Baru
+    const { data: newT } = await supabase
+      .from('tournaments')
+      .insert({
+        title: 'Padel Championship Hub',
+        scoring_mode: scoringMode,
+        deuce_rule: deuceRule,
+        games_per_set: gamesPerSet,
+        total_sets: totalSets,
+        status: 'active',
+      })
+      .select()
+      .single();
+
+    if (!newT) return alert('Gagal membuat turnamen di database.');
+    setTournamentId(newT.id);
+
+    const shuffled = [...participants].sort(() => Math.random() - 0.5);
+
+    // 2. Buat Slot Final
+    const { data: finalSlot } = await supabase
+      .from('brackets')
+      .insert({
+        tournament_id: newT.id,
+        round_name: 'FINAL',
+        match_index: 6,
+      })
+      .select()
+      .single();
+
+    // 3. Buat Slot Semifinal (Terhubung ke Final)
+    const { data: semi1 } = await supabase
+      .from('brackets')
+      .insert({
+        tournament_id: newT.id,
+        round_name: 'SEMIFINAL',
+        match_index: 4,
+        next_bracket_id: finalSlot.id,
+        next_slot: 1,
+      })
+      .select()
+      .single();
+
+    const { data: semi2 } = await supabase
+      .from('brackets')
+      .insert({
+        tournament_id: newT.id,
+        round_name: 'SEMIFINAL',
+        match_index: 5,
+        next_bracket_id: finalSlot.id,
+        next_slot: 2,
+      })
+      .select()
+      .single();
+
+    // 4. Buat Match Quarterfinal (Terhubung ke Semifinal)
+    const qfTargets = [
+      { nextId: semi1.id, slot: 1 },
+      { nextId: semi1.id, slot: 2 },
+      { nextId: semi2.id, slot: 1 },
+      { nextId: semi2.id, slot: 2 },
+    ];
+
+    for (let i = 0; i < 4; i++) {
+      const p1 = shuffled[i * 2];
+      const p2 = shuffled[i * 2 + 1];
+
+      if (p1 && p2) {
+        const { data: mData } = await supabase
           .from('matches')
           .insert({
-            team1_name: shuffled[i].teamName,
-            team1_p1_name: shuffled[i].p1,
-            team1_p2_name: shuffled[i].p2,
-            team2_name: shuffled[i + 1].teamName,
-            team2_p1_name: shuffled[i + 1].p1,
-            team2_p2_name: shuffled[i + 1].p2,
+            team1_name: p1.teamName,
+            team1_p1_name: p1.p1,
+            team1_p2_name: p1.p2,
+            team2_name: p2.teamName,
+            team2_p1_name: p2.p1,
+            team2_p2_name: p2.p2,
             match_type: 'tournament',
             scoring_mode: scoringMode,
             deuce_rule: deuceRule,
@@ -129,9 +315,9 @@ export default function TournamentDashboard() {
           .select()
           .single();
 
-        if (createdMatch) {
+        if (mData) {
           await supabase.from('match_states').insert({
-            match_id: createdMatch.id,
+            match_id: mData.id,
             team1_points: '0',
             team2_points: '0',
             team1_games: [0, 0, 0, 0, 0],
@@ -140,25 +326,35 @@ export default function TournamentDashboard() {
             current_server: 1,
           });
 
-          matches.push({
-            id: createdMatch.id,
-            round: roundTitle,
-            t1: `${shuffled[i].p1} / ${shuffled[i].p2}`,
-            t2: `${shuffled[i + 1].p1} / ${shuffled[i + 1].p2}`,
-            t1Name: shuffled[i].teamName,
-            t2Name: shuffled[i + 1].teamName,
+          await supabase.from('brackets').insert({
+            tournament_id: newT.id,
+            round_name: 'QUARTERFINAL',
+            match_index: i,
+            match_id: mData.id,
+            team1_name: p1.teamName,
+            team1_p1: p1.p1,
+            team1_p2: p1.p2,
+            team2_name: p2.teamName,
+            team2_p1: p2.p1,
+            team2_p2: p2.p2,
+            next_bracket_id: qfTargets[i].nextId,
+            next_slot: qfTargets[i].slot,
           });
         }
       }
     }
 
-    setBracketMatches(matches);
+    await loadActiveTournament();
     setActiveTab('bracket');
   };
 
+  const qfBrackets = brackets.filter((b) => b.round_name === 'QUARTERFINAL');
+  const sfBrackets = brackets.filter((b) => b.round_name === 'SEMIFINAL');
+  const finalBrackets = brackets.filter((b) => b.round_name === 'FINAL');
+
   return (
     <main className="min-h-screen p-4 sm:p-8 max-w-6xl mx-auto space-y-8 select-none">
-      {/* Header Turnamen & Status User */}
+      {/* Header Turnamen */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-6">
         <div>
           <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">PRO TOURNAMENT MANAGER</span>
@@ -206,7 +402,7 @@ export default function TournamentDashboard() {
           onClick={() => setActiveTab('bracket')}
           className={`flex-1 py-2.5 rounded-xl transition-all ${activeTab === 'bracket' ? 'bg-cyan-500 text-black' : 'text-slate-400'}`}
         >
-          Bagan Bracket
+          Bagan Bracket ({brackets.length})
         </button>
         <button
           onClick={() => setActiveTab('admins')}
@@ -220,7 +416,6 @@ export default function TournamentDashboard() {
       {activeTab === 'participants' && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
           
-          {/* Panel Form Tambah Peserta */}
           <div className="space-y-6">
             <div className="glass-panel p-6 rounded-3xl space-y-4">
               <h2 className="text-base font-bold flex items-center gap-2 text-slate-200">
@@ -321,7 +516,6 @@ export default function TournamentDashboard() {
             </div>
           </div>
 
-          {/* Tabel Daftar Tim Peserta */}
           <div className="lg:col-span-2 glass-panel p-6 rounded-3xl space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-white/10 pb-4">
               <div>
@@ -332,7 +526,7 @@ export default function TournamentDashboard() {
                 onClick={generateBracket}
                 className="bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold px-5 py-3 rounded-xl text-xs flex items-center justify-center gap-2 shadow-xl transition-all"
               >
-                <Shuffle className="w-4 h-4" /> Acak & Generate Bracket
+                <Shuffle className="w-4 h-4" /> Acak & Simpan Bracket ke DB
               </button>
             </div>
 
@@ -348,112 +542,191 @@ export default function TournamentDashboard() {
         </div>
       )}
 
-      {/* TAB 2: BAGAN BRACKET VISUAL TREE */}
+      {/* TAB 2: BAGAN BRACKET PERMANEN & AUTO ADVANCE */}
       {activeTab === 'bracket' && (
         <div className="glass-panel p-6 rounded-3xl space-y-6 overflow-x-auto">
-          <div className="flex justify-between items-center min-w-[600px]">
+          <div className="flex justify-between items-center min-w-[700px]">
             <div>
               <h2 className="text-xl font-bold text-cyan-400 flex items-center gap-2">
-                <GitMerge className="w-6 h-6" /> Bagan Eliminasi Gugur (Knockout Tree)
+                <GitMerge className="w-6 h-6" /> Bagan Eliminasi Gugur (Persisten & Auto-Advance)
               </h2>
-              <p className="text-xs text-slate-400">Pilih match untuk membuka kontrol Wasit atau link OBS Stream</p>
+              <p className="text-xs text-slate-400">Pemenang match otomatis maju ke babak selanjutnya dan tersimpan di database</p>
             </div>
             <button
               onClick={generateBracket}
               className="bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold px-3.5 py-2 rounded-xl text-xs flex items-center gap-1.5 border border-white/10"
             >
-              <Shuffle className="w-3.5 h-3.5" /> Acak Ulang
+              <Shuffle className="w-3.5 h-3.5" /> Acak Ulang Turnamen
             </button>
           </div>
 
-          {bracketMatches.length === 0 ? (
+          {brackets.length === 0 ? (
             <div className="text-center py-16 bg-slate-900/50 rounded-2xl border border-white/5 space-y-3">
               <Trophy className="w-12 h-12 text-slate-600 mx-auto" />
-              <p className="text-xs text-slate-400">Belum ada bracket aktif. Silakan buat bracket pada tab Peserta.</p>
+              <p className="text-xs text-slate-400">Belum ada bracket aktif di Database. Klik **Acak & Simpan Bracket ke DB** pada tab Peserta.</p>
             </div>
           ) : (
-            /* Tampilan Visual Tree Bracket Horizontal */
-            <div className="flex gap-8 items-stretch pt-4 pb-6 min-w-[750px]">
-              {/* Kolom Babak Utama (cth: Quarterfinal) */}
-              <div className="flex-1 space-y-6">
+            <div className="flex gap-8 items-stretch pt-4 pb-6 min-w-[850px]">
+              
+              {/* KOLOM QUARTERFINAL */}
+              <div className="flex-1 space-y-4">
                 <div className="text-center bg-cyan-500/10 border border-cyan-500/20 py-2 rounded-xl text-xs font-black text-cyan-400 uppercase tracking-widest">
-                  {bracketMatches[0]?.round || 'BABAK ELEMINASI'}
+                  QUARTERFINAL
                 </div>
 
                 <div className="space-y-4">
-                  {bracketMatches.map((m, idx) => (
-                    <div key={idx} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl hover:border-cyan-500/40 transition-all">
+                  {qfBrackets.map((b, idx) => (
+                    <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
                       <div className="flex justify-between items-center text-[11px]">
                         <span className="font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">
                           MATCH #{idx + 1}
                         </span>
-                        <span className="text-slate-500 font-mono text-[10px]">ID: {m.id.substring(0, 8)}...</span>
+                        {b.winner_team > 0 && (
+                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2 py-0.5 rounded flex items-center gap-1">
+                            <CheckCircle2 className="w-3 h-3" /> SELESAI
+                          </span>
+                        )}
                       </div>
 
                       <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
-                        <div className="flex justify-between items-center text-emerald-400">
-                          <span className="truncate">{m.t1}</span>
-                          {m.t1Name && <span className="text-[9px] text-slate-500 uppercase shrink-0">{m.t1Name}</span>}
+                        <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-emerald-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team1_p1} / {b.team1_p2}</span>
+                          {b.winner_team === 1 && <span>🏆</span>}
                         </div>
-                        <div className="border-t border-white/5 pt-1.5 flex justify-between items-center text-cyan-400">
-                          <span className="truncate">{m.t2}</span>
-                          {m.t2Name && <span className="text-[9px] text-slate-500 uppercase shrink-0">{m.t2Name}</span>}
+                        <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-cyan-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team2_p1} / {b.team2_p2}</span>
+                          {b.winner_team === 2 && <span>🏆</span>}
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-2 text-xs">
-                        <a
-                          href={`/referee/${m.id}`}
-                          target="_blank"
-                          className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
-                        >
-                          <Play className="w-3 h-3 fill-emerald-300" /> Wasit
-                        </a>
-                        <a
-                          href={`/overlay/${m.id}`}
-                          target="_blank"
-                          className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
-                        >
-                          <ExternalLink className="w-3 h-3" /> OBS
-                        </a>
-                      </div>
+                      {b.match_id && (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <a
+                            href={`/referee/${b.match_id}`}
+                            target="_blank"
+                            className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                          </a>
+                          <a
+                            href={`/overlay/${b.match_id}`}
+                            target="_blank"
+                            className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <ExternalLink className="w-3 h-3" /> OBS
+                          </a>
+                        </div>
+                      )}
                     </div>
                   ))}
                 </div>
               </div>
 
-              {/* Garis Penghubung Alur Tree (Visual Diagram) */}
-              <div className="w-12 flex flex-col justify-around items-center opacity-30">
-                <div className="w-full h-0.5 bg-cyan-400"></div>
-                <div className="w-full h-0.5 bg-cyan-400"></div>
-              </div>
-
-              {/* Kolom Slot Semifinal (Placeholder Pemenang) */}
-              <div className="flex-1 space-y-6 opacity-60">
-                <div className="text-center bg-slate-800 border border-white/10 py-2 rounded-xl text-xs font-black text-slate-400 uppercase tracking-widest">
+              {/* KOLOM SEMIFINAL */}
+              <div className="flex-1 space-y-4">
+                <div className="text-center bg-emerald-500/10 border border-emerald-500/20 py-2 rounded-xl text-xs font-black text-emerald-400 uppercase tracking-widest">
                   SEMIFINAL
                 </div>
 
-                <div className="flex flex-col justify-around h-[85%] space-y-8">
-                  <div className="bg-slate-900/40 p-4 rounded-2xl border border-dashed border-white/10 text-center text-xs text-slate-500">
-                    Pemenang Match #1 vs Match #2
-                  </div>
-                  <div className="bg-slate-900/40 p-4 rounded-2xl border border-dashed border-white/10 text-center text-xs text-slate-500">
-                    Pemenang Match #3 vs Match #4
-                  </div>
+                <div className="flex flex-col justify-around h-[90%] space-y-6">
+                  {sfBrackets.map((b, idx) => (
+                    <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">
+                          SEMI #{idx + 1}
+                        </span>
+                        {b.winner_team > 0 && (
+                          <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2 py-0.5 rounded">
+                            SELESAI
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
+                        <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-emerald-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Pemenang...'}</span>
+                          {b.winner_team === 1 && <span>🏆</span>}
+                        </div>
+                        <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-cyan-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Pemenang...'}</span>
+                          {b.winner_team === 2 && <span>🏆</span>}
+                        </div>
+                      </div>
+
+                      {b.match_id ? (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <a
+                            href={`/referee/${b.match_id}`}
+                            target="_blank"
+                            className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                          </a>
+                          <a
+                            href={`/overlay/${b.match_id}`}
+                            target="_blank"
+                            className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <ExternalLink className="w-3 h-3" /> OBS
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-slate-500 text-center py-1">
+                          Akan aktif otomatis setelah Quarterfinal selesai
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
-              {/* Kolom Slot Final */}
-              <div className="w-48 space-y-6 opacity-40">
+              {/* KOLOM FINAL */}
+              <div className="flex-1 space-y-4">
                 <div className="text-center bg-amber-500/10 border border-amber-500/20 py-2 rounded-xl text-xs font-black text-amber-400 uppercase tracking-widest">
                   FINAL 🏆
                 </div>
 
-                <div className="flex flex-col justify-center h-[85%]">
-                  <div className="bg-amber-500/5 p-4 rounded-2xl border border-dashed border-amber-500/20 text-center text-xs text-amber-300/60">
-                    Perebutan Juara
-                  </div>
+                <div className="flex flex-col justify-center h-[90%]">
+                  {finalBrackets.map((b) => (
+                    <div key={b.id} className="bg-slate-900/90 p-5 rounded-2xl border-2 border-amber-500/40 space-y-3 shadow-2xl">
+                      <div className="flex justify-between items-center text-[11px]">
+                        <span className="font-extrabold text-amber-400">CHAMPIONSHIP MATCH</span>
+                        {b.winner_team > 0 && <span className="text-amber-300 font-bold">🏆 JUARA</span>}
+                      </div>
+
+                      <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
+                        <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-amber-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Semifinalist 1...'}</span>
+                        </div>
+                        <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-amber-400 font-extrabold' : 'text-slate-300'}`}>
+                          <span>{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Semifinalist 2...'}</span>
+                        </div>
+                      </div>
+
+                      {b.match_id ? (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                          <a
+                            href={`/referee/${b.match_id}`}
+                            target="_blank"
+                            className="bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                          </a>
+                          <a
+                            href={`/overlay/${b.match_id}`}
+                            target="_blank"
+                            className="bg-cyan-500/20 hover:bg-cyan-500/30 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]"
+                          >
+                            <ExternalLink className="w-3 h-3" /> OBS
+                          </a>
+                        </div>
+                      ) : (
+                        <div className="text-[10px] text-slate-500 text-center py-1">
+                          Akan aktif otomatis setelah Semifinal selesai
+                        </div>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
 
