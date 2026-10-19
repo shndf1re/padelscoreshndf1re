@@ -31,7 +31,6 @@ export default function OBSOverlay() {
 
     fetchData();
 
-    // Realtime Listener untuk perubahan skor & status
     const channel = supabase
       .channel(`obs-realtime-${matchId}`)
       .on(
@@ -46,42 +45,24 @@ export default function OBSOverlay() {
     };
   }, [matchId]);
 
-  if (!matchState || !matchData) return <div className="bg-transparent text-white p-4 font-mono">Connecting Broadcast...</div>;
+  if (!matchState || !matchData) return <div className="bg-transparent text-white p-4 font-mono">Connecting Overlay...</div>;
 
   const fontStyle = matchState.overlay_font || 'Teko';
 
   return (
     <div className="w-full h-screen bg-transparent flex items-end p-8" style={{ fontFamily: `'${fontStyle}', sans-serif` }}>
-      {/* Premier Padel Style Scoreboard Bar */}
       <div className="bg-slate-950/90 backdrop-blur-xl text-white rounded-2xl p-4 border border-white/20 shadow-2xl flex items-center gap-6 min-w-[620px] relative overflow-hidden">
         
-        {/* Logo Turnamen */}
         {matchData.tournament_logo && (
           <div className="w-12 h-12 flex items-center justify-center border-r border-white/10 pr-4">
             <img src={matchData.tournament_logo} alt="Tournament" className="max-h-full max-w-full object-contain" />
           </div>
         )}
 
-        {/* Live Badges Display */}
         <div className="absolute -top-3 left-6 flex gap-2">
           {matchState.is_break_point && (
             <span className="bg-red-600 text-white text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg animate-bounce">
               🔥 BREAK POINT
-            </span>
-          )}
-          {matchState.is_set_point && (
-            <span className="bg-amber-500 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
-              ⚡ SET POINT
-            </span>
-          )}
-          {matchState.is_match_point && (
-            <span className="bg-emerald-500 text-black text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
-              🏆 MATCH POINT
-            </span>
-          )}
-          {matchState.is_tournament_point && (
-            <span className="bg-purple-600 text-white text-[11px] px-3 py-0.5 rounded-full font-extrabold uppercase tracking-widest shadow-lg">
-              🥇 TOURNAMENT POINT
             </span>
           )}
           {matchState.is_star_point && (
@@ -91,9 +72,7 @@ export default function OBSOverlay() {
           )}
         </div>
 
-        {/* Papan Skor Tim 1 vs Tim 2 */}
         <div className="flex-1 space-y-2 mt-1">
-          {/* Tim 1 */}
           <div className="flex justify-between items-center bg-white/5 px-4 py-2 rounded-xl">
             <div className="flex items-center gap-3">
               {matchData.team1_logo && (
@@ -105,14 +84,13 @@ export default function OBSOverlay() {
               {matchState.current_server === 1 && <span className="text-emerald-400 text-xl animate-pulse">🎾</span>}
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-slate-400 text-xl font-bold">Set: {matchState.team1_games?.[matchState.current_set || 0] || 0}</span>
+              <span className="text-slate-400 text-xl font-bold">Games: {matchState.team1_games?.[matchState.current_set || 0] || 0}</span>
               <span className="text-4xl font-extrabold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-4 py-0.5 rounded-lg">
                 {matchState.team1_points}
               </span>
             </div>
           </div>
 
-          {/* Tim 2 */}
           <div className="flex justify-between items-center bg-white/5 px-4 py-2 rounded-xl">
             <div className="flex items-center gap-3">
               {matchData.team2_logo && (
@@ -124,7 +102,7 @@ export default function OBSOverlay() {
               {matchState.current_server === 2 && <span className="text-emerald-400 text-xl animate-pulse">🎾</span>}
             </div>
             <div className="flex items-center gap-4">
-              <span className="text-slate-400 text-xl font-bold">Set: {matchState.team2_games?.[matchState.current_set || 0] || 0}</span>
+              <span className="text-slate-400 text-xl font-bold">Games: {matchState.team2_games?.[matchState.current_set || 0] || 0}</span>
               <span className="text-4xl font-extrabold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-4 py-0.5 rounded-lg">
                 {matchState.team2_points}
               </span>
