@@ -1,300 +1,374 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
-import { calculatePadelScore, ScoreState, DeuceRule } from '@/lib/padelEngine';
-import { RotateCcw, Type, Trophy, History } from 'lucide-react';
+import { useParams, useRouter } from 'next/navigation';
+import { RotateCcw, Award, ChevronLeft, RefreshCw, Zap } from 'lucide-react';
 
-export default function RefereeControl() {
+export default function RefereePanel() {
   const params = useParams();
   const matchId = params?.matchId as string;
+  const router = useRouter();
 
-  const [matchInfo, setMatchInfo] = useState<any>(null);
-  const [matchState, setMatchState] = useState<ScoreState>({
-    team1Points: '0',
-    team2Points: '0',
-    team1Games: [0, 0, 0, 0, 0],
-    team2Games: [0, 0, 0, 0, 0],
-    team1SetsWon: 0,
-    team2SetsWon: 0,
-    currentSet: 0,
-    currentServer: 1,
-    deuceCount: 0,
-    isBreakPoint: false,
-    isSetPoint: false,
-    isMatchPoint: false,
-    isStarPoint: false,
-    isFinished: false,
-    winnerTeam: 0,
-  });
+  const [match, setMatch] = useState<any>(null);
+  const [state, setState] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const [pointHistory, setPointHistory] = useState<any[]>([]);
-  const [historyStack, setHistoryStack] = useState<ScoreState[]>([]);
-  const [selectedFont, setSelectedFont] = useState('Teko');
-  const [syncError, setSyncError] = useState<string | null>(null);
-
-  useEffect(() => {
+  // Ambil data pertandingan & status terkini dari Supabase
+  const fetchMatchData = async () => {
     if (!matchId) return;
 
-    const fetchMatch = async () => {
-      const { data: mData } = await supabase
-        .from('matches')
-        .select('*')
-        .eq('id', matchId)
-        .single();
-      if (mData) setMatchInfo(mData);
+    const { data: matchData } = await supabase
+      .from('matches')
+      .select('*')
+      .eq('id', matchId)
+      .single();
 
-      const { data: sData } = await supabase
-        .from('match_states')
-        .select('*')
-        .eq('match_id', matchId)
-        .single();
+    const { data: stateData } = await supabase
+      .from('match_states')
+      .select('*')
+      .eq('match_id', matchId)
+      .single();
 
-      if (sData) {
-        setMatchState({
-          team1Points: sData.team1_points || '0',
-          team2Points: sData.team2_points || '0',
-          team1Games: sData.team1_games || [0, 0, 0, 0, 0],
-          team2Games: sData.team2_games || [0, 0, 0, 0, 0],
-          team1SetsWon: sData.team1_sets_won || 0,
-          team2SetsWon: sData.team2_sets_won || 0,
-          currentSet: sData.current_set || 0,
-          currentServer: sData.current_server || 1,
-          deuceCount: 0,
-          isBreakPoint: sData.is_break_point || false,
-          isSetPoint: sData.is_set_point || false,
-          isMatchPoint: sData.is_match_point || false,
-          isStarPoint: sData.is_star_point || false,
-          isFinished: sData.is_finished || false,
-          winnerTeam: sData.winner_team || 0,
-        });
-        if (sData.overlay_font) setSelectedFont(sData.overlay_font);
-        if (sData.point_history) setPointHistory(sData.point_history);
-      }
+    if (matchData) setMatch(matchData);
+    if (stateData) setState(stateData);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    fetchMatchData();
+
+    // Listener Realtime Supabase
+    const channel = supabase
+      .channel(`referee-${matchId}`)
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'match_states', filter: `match_id=eq.${matchId}` },
+        (payload: any) => {
+          if (payload.new) setState(payload.new);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
     };
-
-    fetchMatch();
   }, [matchId]);
 
-  const syncToSupabase = async (updated: ScoreState, newHistory = pointHistory, fontName = selectedFont) => {
-    const { error } = await supabase
-      .from('match_states')
-      .upsert(
-        {
-          match_id: matchId,
-          team1_points: updated.team1Points,
-          team2_points: updated.team2Points,
-          team1_games: updated.team1Games,
-          team2_games: updated.team2Games,
-          team1_sets_won: updated.team1SetsWon,
-          team2_sets_won: updated.team2SetsWon,
-          current_set: updated.currentSet,
-          current_server: updated.currentServer,
-          is_break_point: updated.isBreakPoint,
-          is_star_point: updated.isStarPoint,
-          is_finished: updated.isFinished,
-          winner_team: updated.winnerTeam,
-          point_history: newHistory,
-          overlay_font: fontName,
-          updated_at: new Date().toISOString(),
-        },
-        { onConflict: 'match_id' }
-      );
-
-    if (error) setSyncError(error.message);
-    else setSyncError(null);
-  };
-
-  const updateScore = async (scoringTeam: 1 | 2) => {
-    if (matchState.isFinished) return;
-
-    setHistoryStack((prev) => [...prev, JSON.parse(JSON.stringify(matchState))]);
-    const mode = matchInfo?.scoring_mode || 'traditional';
-    const deuceRule = matchInfo?.deuce_rule || 'golden';
-    const gamesPerSet = matchInfo?.games_per_set || 6;
-    const totalSets = matchInfo?.total_sets || 3;
-
-    const updated = calculatePadelScore(
-      matchState,
-      scoringTeam,
-      mode,
-      deuceRule as DeuceRule,
-      gamesPerSet,
-      totalSets
+  if (loading || !match || !state) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
+        <div className="text-center space-y-3">
+          <div className="w-8 h-8 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin mx-auto"></div>
+          <p className="text-xs text-slate-400">Memuat Panel Wasit...</p>
+        </div>
+      </main>
     );
+  }
 
-    // Tambah Log Alur Poin
-    const logItem = {
-      time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-      set: updated.currentSet + 1,
-      scoringTeam,
-      scoreText: `${updated.team1Points} - ${updated.team2Points}`,
-      gamesText: `Set ${updated.currentSet + 1}: (${updated.team1Games[updated.currentSet]} - ${updated.team2Games[updated.currentSet]})`,
-    };
+  const targetGames = match.games_per_set || 6;
+  const totalSets = match.total_sets || 1;
+  const deuceRule = match.deuce_rule || 'golden'; // 'golden', 'advantage', atau 'star'
 
-    const updatedHistory = [logItem, ...pointHistory].slice(0, 50); // Simpan 50 poin terakhir
-    setPointHistory(updatedHistory);
+  const currentSet = state.current_set || 0;
+  const games1 = state.team1_games?.[currentSet] || 0;
+  const games2 = state.team2_games?.[currentSet] || 0;
 
-    setMatchState(updated);
-    await syncToSupabase(updated, updatedHistory);
+  // Cek apakah mode Tie-Break aktif (6-6 untuk standard, atau 4-4 untuk Fast4)
+  const isTieBreak = (targetGames === 6 && games1 === 6 && games2 === 6) || (targetGames === 4 && games1 === 4 && games2 === 4);
+
+  // Hitung total poin Tie-Break untuk rotasi servis & pindah tempat
+  const tbP1 = parseInt(state.team1_points) || 0;
+  const tbP2 = parseInt(state.team2_points) || 0;
+  const totalTbPoints = tbP1 + tbP2;
+  const isSwitchSideNext = isTieBreak && totalTbPoints > 0 && totalTbPoints % 6 === 0;
+
+  // Logika Penambahan Poin Wasit
+  const addPoint = async (team: 1 | 2) => {
+    if (state.is_finished) return;
+
+    let p1 = state.team1_points;
+    let p2 = state.team2_points;
+    let deuceCount = state.deuce_count || 0; // Mengacak siklus AD1, AD2, dan Star Point
+    let isStarPoint = state.is_star_point || false;
+
+    let g1Array = [...(state.team1_games || [0, 0, 0, 0, 0])];
+    let g2Array = [...(state.team2_games || [0, 0, 0, 0, 0])];
+    let setsWon1 = state.team1_sets_won || 0;
+    let setsWon2 = state.team2_sets_won || 0;
+    let isFinished = false;
+    let winnerTeam = 0;
+
+    // --- 1. MODE TIE-BREAK (Poin Angka 1, 2, 3...) ---
+    if (isTieBreak) {
+      let score1 = parseInt(p1) || 0;
+      let score2 = parseInt(p2) || 0;
+
+      if (team === 1) score1 += 1;
+      else score2 += 1;
+
+      p1 = score1.toString();
+      p2 = score2.toString();
+
+      // Syarat Menang Tie-break: Minimal 7 Poin & Selisih Minimal 2 Poin
+      if ((score1 >= 7 && score1 - score2 >= 2) || (score2 >= 7 && score2 - score1 >= 2)) {
+        if (score1 > score2) g1Array[currentSet] += 1;
+        else g2Array[currentSet] += 1;
+
+        p1 = '0';
+        p2 = '0';
+      }
+    } 
+    // --- 2. MODE SKOR TRADISIONAL (15, 30, 40) ---
+    else {
+      if (team === 1) {
+        if (p1 === '0') p1 = '15';
+        else if (p1 === '15') p1 = '30';
+        else if (p1 === '30') p1 = '40';
+        else if (p1 === '40') {
+          if (p2 === '40') {
+            if (deuceRule === 'golden') {
+              g1Array[currentSet] += 1;
+              p1 = '0'; p2 = '0';
+            } else if (deuceRule === 'star') {
+              // Mode Star Point (2x AD lalu SP)
+              if (deuceCount === 0) {
+                p1 = 'AD1';
+              } else if (deuceCount === 1) {
+                p1 = 'AD2';
+              } else {
+                // Sudah Star Point -> Siapa dapat poin langsung menang game!
+                g1Array[currentSet] += 1;
+                p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+              }
+            } else {
+              p1 = 'AD'; // Standard Advantage
+            }
+          } else if (p2 === 'AD' || p2 === 'AD1' || p2 === 'AD2') {
+            // Kembali ke Deuce
+            p1 = '40'; p2 = '40';
+            if (deuceRule === 'star') {
+              deuceCount += 1;
+              if (deuceCount >= 2) isStarPoint = true; // Aktifkan Badge Star Point!
+            }
+          } else {
+            g1Array[currentSet] += 1;
+            p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+          }
+        } else if (p1 === 'AD' || p1 === 'AD1' || p1 === 'AD2') {
+          g1Array[currentSet] += 1;
+          p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+        }
+      } else {
+        // Tim 2 Tambah Poin
+        if (p2 === '0') p2 = '15';
+        else if (p2 === '15') p2 = '30';
+        else if (p2 === '30') p2 = '40';
+        else if (p2 === '40') {
+          if (p1 === '40') {
+            if (deuceRule === 'golden') {
+              g2Array[currentSet] += 1;
+              p1 = '0'; p2 = '0';
+            } else if (deuceRule === 'star') {
+              if (deuceCount === 0) {
+                p2 = 'AD1';
+              } else if (deuceCount === 1) {
+                p2 = 'AD2';
+              } else {
+                g2Array[currentSet] += 1;
+                p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+              }
+            } else {
+              p2 = 'AD';
+            }
+          } else if (p1 === 'AD' || p1 === 'AD1' || p1 === 'AD2') {
+            p1 = '40'; p2 = '40';
+            if (deuceRule === 'star') {
+              deuceCount += 1;
+              if (deuceCount >= 2) isStarPoint = true;
+            }
+          } else {
+            g2Array[currentSet] += 1;
+            p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+          }
+        } else if (p2 === 'AD' || p2 === 'AD1' || p2 === 'AD2') {
+          g2Array[currentSet] += 1;
+          p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+        }
+      }
+    }
+
+    // --- CEK PEMENANG SET & MATCH ---
+    const curG1 = g1Array[currentSet];
+    const curG2 = g2Array[currentSet];
+
+    let setWonByTeam = 0;
+
+    if (targetGames === 5) {
+      if (curG1 + curG2 >= 5) setWonByTeam = curG1 > curG2 ? 1 : 2;
+    } else if (targetGames === 4) {
+      if (curG1 >= 4 && curG1 - curG2 >= 1) setWonByTeam = 1;
+      else if (curG2 >= 4 && curG2 - curG1 >= 1) setWonByTeam = 2;
+      else if (curG1 === 5 || curG2 === 5) setWonByTeam = curG1 === 5 ? 1 : 2;
+    } else {
+      if (curG1 >= 6 && curG1 - curG2 >= 2) setWonByTeam = 1;
+      else if (curG2 >= 6 && curG2 - curG1 >= 2) setWonByTeam = 2;
+      else if (curG1 === 7 || curG2 === 7) setWonByTeam = curG1 === 7 ? 1 : 2;
+    }
+
+    if (setWonByTeam > 0) {
+      if (setWonByTeam === 1) setsWon1 += 1;
+      else setsWon2 += 1;
+
+      const requiredSets = Math.ceil(totalSets / 2);
+      if (setsWon1 >= requiredSets || setsWon2 >= requiredSets) {
+        isFinished = true;
+        winnerTeam = setsWon1 > setsWon2 ? 1 : 2;
+      } else {
+        currentSet += 1;
+      }
+    }
+
+    // Update ke Database Supabase
+    await supabase
+      .from('match_states')
+      .update({
+        team1_points: p1,
+        team2_points: p2,
+        team1_games: g1Array,
+        team2_games: g2Array,
+        team1_sets_won: setsWon1,
+        team2_sets_won: setsWon2,
+        current_set: currentSet,
+        deuce_count: deuceCount,
+        is_star_point: isStarPoint,
+        is_finished: isFinished,
+        winner_team: winnerTeam,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('match_id', matchId);
   };
 
-  const handleUndo = async () => {
-    if (historyStack.length === 0) return;
-    const previousState = historyStack[historyStack.length - 1];
-    const previousHistory = pointHistory.slice(1);
+  // Reset Skor Match
+  const resetScore = async () => {
+    if (!confirm('Apakah kamu yakin ingin mereset skor pertandingan ini?')) return;
 
-    setHistoryStack((prev) => prev.slice(0, prev.length - 1));
-    setPointHistory(previousHistory);
-    setMatchState(previousState);
-    await syncToSupabase(previousState, previousHistory);
+    await supabase
+      .from('match_states')
+      .update({
+        team1_points: '0',
+        team2_points: '0',
+        team1_games: [0, 0, 0, 0, 0],
+        team2_games: [0, 0, 0, 0, 0],
+        team1_sets_won: 0,
+        team2_sets_won: 0,
+        current_set: 0,
+        deuce_count: 0,
+        is_star_point: false,
+        is_finished: false,
+        winner_team: 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('match_id', matchId);
   };
-
-  if (!matchInfo) return <div className="p-6 text-center text-white">Memuat Panel Wasit...</div>;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none space-y-4">
+    <main className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none">
+      {/* Header Info Match */}
       <div className="space-y-3">
         <div className="flex justify-between items-center bg-slate-900 p-3 rounded-2xl border border-white/10">
-          <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">WASIT DASHBOARD</span>
-          <button
-            onClick={handleUndo}
-            disabled={historyStack.length === 0}
-            className="flex items-center gap-1.5 bg-rose-500/20 text-rose-300 border border-rose-500/30 px-3 py-1 rounded-xl text-xs font-bold disabled:opacity-30 active:scale-95 transition-all"
-          >
-            <RotateCcw className="w-3.5 h-3.5" /> UNDO
+          <button onClick={() => router.back()} className="text-slate-400 hover:text-white p-1">
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="text-center">
+            <span className="text-[10px] text-emerald-400 font-extrabold uppercase tracking-widest block">
+              {isTieBreak ? '🔥 TIE-BREAK MODE' : `MODE ${targetGames} GAMES`}
+            </span>
+            <h1 className="text-xs font-bold text-slate-200">
+              {match.team1_name} vs {match.team2_name}
+            </h1>
+          </div>
+          <button onClick={resetScore} className="text-rose-400 hover:text-rose-300 p-1" title="Reset Skor">
+            <RotateCcw className="w-4 h-4" />
           </button>
         </div>
 
-        {syncError && (
-          <div className="bg-rose-500/20 border border-rose-500/40 text-rose-300 p-3 rounded-xl text-xs font-semibold">
-            ⚠️ Gagal sync ke database: {syncError}
+        {/* Banner Peringatan Pergantian Sisi Lapangan pada Tie-Break */}
+        {isSwitchSideNext && (
+          <div className="bg-amber-500/20 border border-amber-500/40 p-3 rounded-2xl text-center flex items-center justify-center gap-2 animate-pulse text-amber-300 font-extrabold text-xs">
+            <RefreshCw className="w-4 h-4" /> PERGANTIAN SISI LAPANGAN (POIN {totalTbPoints})
           </div>
         )}
 
-        {matchState.isFinished && (
-          <div className="bg-amber-500/20 border border-amber-500/40 p-4 rounded-2xl text-center space-y-2">
-            <Trophy className="w-8 h-8 text-amber-400 mx-auto" />
-            <h2 className="text-lg font-bold text-amber-300">MATCH SELESAI!</h2>
-            <p className="text-xs text-slate-300">
-              Pemenang:{' '}
-              <span className="font-bold text-emerald-400">
-                {matchState.winnerTeam === 1
-                  ? matchInfo.team1_name || `${matchInfo.team1_p1_name} / ${matchInfo.team1_p2_name}`
-                  : matchInfo.team2_name || `${matchInfo.team2_p1_name} / ${matchInfo.team2_p2_name}`}
-              </span>
+        {/* Display Banner Status Jika Match Selesai */}
+        {state.is_finished && (
+          <div className="bg-emerald-500/20 border border-emerald-500/50 p-4 rounded-2xl text-center space-y-1 animate-bounce">
+            <Award className="w-8 h-8 text-emerald-400 mx-auto" />
+            <h2 className="text-sm font-black text-emerald-300 uppercase">PERTANDINGAN SELESAI</h2>
+            <p className="text-xs font-bold text-white">
+              PEMENANG: {state.winner_team === 1 ? match.team1_name || `${match.team1_p1_name}/${match.team1_p2_name}` : match.team2_name || `${match.team2_p1_name}/${match.team2_p2_name}`}
             </p>
           </div>
         )}
 
-        <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 flex items-center justify-between text-xs">
-          <span className="text-slate-400 font-semibold flex items-center gap-1">
-            <Type className="w-4 h-4 text-cyan-400" /> OBS Font:
-          </span>
-          <select
-            value={selectedFont}
-            onChange={(e) => {
-              setSelectedFont(e.target.value);
-              syncToSupabase(matchState, pointHistory, e.target.value);
-            }}
-            className="bg-slate-950 border border-white/10 text-white rounded-lg px-2 py-1 focus:outline-none"
-          >
-            <option value="Teko">Teko (TV Broadcast)</option>
-            <option value="Bebas Neue">Bebas Neue (Bold)</option>
-            <option value="Montserrat">Montserrat (Clean)</option>
-            <option value="Outfit">Outfit (SaaS Modern)</option>
-          </select>
+        {/* Badge Indicator STAR POINT / GOLDEN POINT */}
+        {state.is_star_point && !state.is_finished && (
+          <div className="bg-yellow-500/20 border border-yellow-500/50 p-2.5 rounded-2xl text-center flex items-center justify-center gap-2 text-yellow-300 font-black text-xs">
+            <Zap className="w-4 h-4 fill-yellow-300" /> STAR POINT (POIN PENENTU GAME)
+          </div>
+        )}
+
+        {/* Indicator Board Skor Games */}
+        <div className="grid grid-cols-2 gap-3 bg-slate-900 p-4 rounded-3xl border border-white/10">
+          {/* Tim 1 */}
+          <div className="space-y-1 text-center">
+            <span className="text-[10px] text-slate-400 font-bold block truncate">
+              {match.team1_p1_name} / {match.team1_p2_name}
+            </span>
+            <div className="text-4xl font-black text-emerald-400">{state.team1_points}</div>
+            <div className="text-xs font-bold text-slate-300">
+              Games: <span className="text-white font-extrabold">{state.team1_games?.[currentSet] || 0}</span>
+            </div>
+          </div>
+
+          {/* Tim 2 */}
+          <div className="space-y-1 text-center border-l border-white/10">
+            <span className="text-[10px] text-slate-400 font-bold block truncate">
+              {match.team2_p1_name} / {match.team2_p2_name}
+            </span>
+            <div className="text-4xl font-black text-cyan-400">{state.team2_points}</div>
+            <div className="text-xs font-bold text-slate-300">
+              Games: <span className="text-white font-extrabold">{state.team2_games?.[currentSet] || 0}</span>
+            </div>
+          </div>
         </div>
       </div>
 
-      {/* Ringkasan Set */}
-      <div className="bg-slate-900/80 p-3 rounded-2xl border border-white/10 text-xs flex justify-around text-center my-2">
-        <div>
-          <span className="text-[10px] text-slate-500 block uppercase font-bold">Set Sekarang</span>
-          <span className="font-bold text-emerald-400 text-sm">Set {matchState.currentSet + 1}</span>
-        </div>
-        <div className="border-r border-white/10" />
-        <div>
-          <span className="text-[10px] text-slate-500 block uppercase font-bold">Skor Set (A - B)</span>
-          <span className="font-bold text-white text-sm">
-            {matchState.team1SetsWon} - {matchState.team2SetsWon}
-          </span>
-        </div>
-      </div>
-
-      {/* Area Tombol Poin */}
-      <div className="grid grid-cols-2 gap-4 my-2">
+      {/* Tombol Input Poin Raksasa */}
+      <div className="grid grid-cols-1 gap-4 my-6">
         <button
-          onClick={() => updateScore(1)}
-          disabled={matchState.isFinished}
-          className="h-64 rounded-3xl bg-slate-900 border-2 border-emerald-500/40 active:border-emerald-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
+          onClick={() => addPoint(1)}
+          disabled={state.is_finished}
+          className="bg-emerald-600 active:bg-emerald-500 disabled:opacity-40 text-white font-extrabold py-10 rounded-3xl text-2xl shadow-2xl border border-emerald-400/30 flex flex-col items-center justify-center gap-1 transition-all active:scale-95"
         >
-          <div>
-            {matchInfo.team1_name && (
-              <span className="text-xs font-bold text-emerald-400 uppercase block mb-1">
-                {matchInfo.team1_name}
-              </span>
-            )}
-            <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p1_name}</p>
-            <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p2_name}</p>
-          </div>
-          <div className="text-center">
-            <span className="text-6xl font-black text-emerald-400 block">{matchState.team1Points}</span>
-            <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">+1 Point</span>
-          </div>
-          <div className="flex justify-between items-center text-xs text-slate-400">
-            <span>Games: {matchState.team1Games[matchState.currentSet]}</span>
-            {matchState.currentServer === 1 && <span>🎾</span>}
-          </div>
+          <span>POIN TIM 1</span>
+          <span className="text-xs font-medium opacity-80">{match.team1_p1_name} & {match.team1_p2_name}</span>
         </button>
 
         <button
-          onClick={() => updateScore(2)}
-          disabled={matchState.isFinished}
-          className="h-64 rounded-3xl bg-slate-900 border-2 border-cyan-500/40 active:border-cyan-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
+          onClick={() => addPoint(2)}
+          disabled={state.is_finished}
+          className="bg-cyan-600 active:bg-cyan-500 disabled:opacity-40 text-white font-extrabold py-10 rounded-3xl text-2xl shadow-2xl border border-cyan-400/30 flex flex-col items-center justify-center gap-1 transition-all active:scale-95"
         >
-          <div>
-            {matchInfo.team2_name && (
-              <span className="text-xs font-bold text-cyan-400 uppercase block mb-1">
-                {matchInfo.team2_name}
-              </span>
-            )}
-            <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p1_name}</p>
-            <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p2_name}</p>
-          </div>
-          <div className="text-center">
-            <span className="text-6xl font-black text-cyan-400 block">{matchState.team2Points}</span>
-            <span className="text-[10px] text-slate-500 font-medium uppercase tracking-wider">+1 Point</span>
-          </div>
-          <div className="flex justify-between items-center text-xs text-slate-400">
-            <span>Games: {matchState.team2Games[matchState.currentSet]}</span>
-            {matchState.currentServer === 2 && <span>🎾</span>}
-          </div>
+          <span>POIN TIM 2</span>
+          <span className="text-xs font-medium opacity-80">{match.team2_p1_name} & {match.team2_p2_name}</span>
         </button>
       </div>
 
-      {/* Log Alur Poin Terakhir */}
-      <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/10 space-y-2">
-        <span className="text-[11px] font-bold text-slate-400 flex items-center gap-1.5 uppercase tracking-wider">
-          <History className="w-3.5 h-3.5 text-cyan-400" /> Alur Poin Terakhir
-        </span>
-        <div className="max-h-28 overflow-y-auto space-y-1 text-xs pr-1">
-          {pointHistory.length === 0 ? (
-            <p className="text-slate-600 text-[11px]">Belum ada alur poin tercatat.</p>
-          ) : (
-            pointHistory.slice(0, 5).map((log, idx) => (
-              <div key={idx} className="flex justify-between items-center bg-slate-950 px-2.5 py-1 rounded-lg text-[11px]">
-                <span className="text-slate-500">{log.time}</span>
-                <span className={log.scoringTeam === 1 ? 'text-emerald-400 font-bold' : 'text-cyan-400 font-bold'}>
-                  +1 {log.scoringTeam === 1 ? 'Tim A' : 'Tim B'}
-                </span>
-                <span className="text-slate-300 font-mono font-bold">{log.scoreText}</span>
-              </div>
-            ))
-          )}
-        </div>
+      {/* Info Aturan Ringkas */}
+      <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 text-[11px] text-slate-400 text-center space-y-1">
+        <p>Deuce Rule: <span className="text-slate-200 font-bold">{deuceRule === 'star' ? '2x AD ➔ Star Point' : deuceRule === 'advantage' ? 'Advantage' : 'Golden Point'}</span></p>
       </div>
-    </div>
+    </main>
   );
 }
