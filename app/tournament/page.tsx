@@ -223,12 +223,16 @@ export default function TournamentDashboard() {
   const generateBracket = async () => {
     if (participants.length < 2) return alert('Butuh minimal 2 tim untuk membuat bracket!');
 
-    // 1. Buat Record Turnamen Baru (Kirim name dan title sekaligus)
+    // Generate Slug Unik berbasis timestamp
+    const dynamicSlug = `padel-championship-${Date.now()}`;
+
+    // 1. Buat Record Turnamen Baru dengan Payload Lengkap (name, title, slug)
     const { data: newT, error: tErr } = await supabase
       .from('tournaments')
       .insert({
         name: 'Padel Championship Hub',
         title: 'Padel Championship Hub',
+        slug: dynamicSlug,
         scoring_mode: scoringMode,
         deuce_rule: deuceRule,
         games_per_set: gamesPerSet,
