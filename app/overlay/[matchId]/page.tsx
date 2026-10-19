@@ -43,7 +43,7 @@ export default function OBSOverlay() {
 
     fetchLatestState();
 
-    // Polling fallback setiap 1.5 detik agar pasti terhubung
+    // Polling fallback 1.5s
     const intervalId = setInterval(fetchLatestState, 1500);
 
     // Realtime listener
@@ -85,10 +85,11 @@ export default function OBSOverlay() {
   }
 
   const fontStyle = matchState.overlay_font || 'Teko';
+  const currentSetIdx = matchState.current_set ?? 0;
 
   return (
     <div className="w-full h-screen bg-transparent flex items-end p-8" style={{ fontFamily: `'${fontStyle}', sans-serif` }}>
-      <div className="bg-slate-950/90 backdrop-blur-xl text-white rounded-2xl p-4 border border-white/20 shadow-2xl flex items-center gap-6 min-w-[700px] relative overflow-hidden">
+      <div className="bg-slate-950/90 backdrop-blur-xl text-white rounded-2xl p-4 border border-white/20 shadow-2xl flex items-center gap-6 min-w-[650px] relative overflow-hidden">
         
         {/* Badges Indikator */}
         <div className="absolute -top-3 left-6 flex gap-2">
@@ -129,17 +130,22 @@ export default function OBSOverlay() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex gap-2 text-slate-400 font-bold text-base">
-                {matchState.team1_games?.map((g: number, i: number) => (
-                  <span
-                    key={i}
-                    className={`px-2 py-0.5 rounded ${
-                      i === matchState.current_set ? 'bg-white/10 text-white' : ''
-                    }`}
-                  >
-                    {g}
-                  </span>
-                ))}
+              {/* Tampilan Set Dinamis: Hanya Tampilkan Set yang Sedang/Sudah Dimainkan */}
+              <div className="flex gap-1.5 font-bold">
+                {matchState.team1_games
+                  ?.slice(0, currentSetIdx + 1)
+                  .map((g: number, i: number) => (
+                    <span
+                      key={i}
+                      className={`px-3 py-1 rounded-lg text-sm font-black min-w-[32px] text-center transition-all ${
+                        i === currentSetIdx
+                          ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 shadow-md'
+                          : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {g}
+                    </span>
+                  ))}
               </div>
               <span className="text-3xl font-extrabold text-emerald-400 bg-emerald-950/60 border border-emerald-500/30 px-4 py-0.5 rounded-lg min-w-[50px] text-center">
                 {matchState.team1_points}
@@ -165,17 +171,22 @@ export default function OBSOverlay() {
               </div>
             </div>
             <div className="flex items-center gap-3">
-              <div className="flex gap-2 text-slate-400 font-bold text-base">
-                {matchState.team2_games?.map((g: number, i: number) => (
-                  <span
-                    key={i}
-                    className={`px-2 py-0.5 rounded ${
-                      i === matchState.current_set ? 'bg-white/10 text-white' : ''
-                    }`}
-                  >
-                    {g}
-                  </span>
-                ))}
+              {/* Tampilan Set Dinamis: Hanya Tampilkan Set yang Sedang/Sudah Dimainkan */}
+              <div className="flex gap-1.5 font-bold">
+                {matchState.team2_games
+                  ?.slice(0, currentSetIdx + 1)
+                  .map((g: number, i: number) => (
+                    <span
+                      key={i}
+                      className={`px-3 py-1 rounded-lg text-sm font-black min-w-[32px] text-center transition-all ${
+                        i === currentSetIdx
+                          ? 'bg-cyan-500/20 text-cyan-400 border border-cyan-500/40 shadow-md'
+                          : 'bg-white/10 text-slate-300'
+                      }`}
+                    >
+                      {g}
+                    </span>
+                  ))}
               </div>
               <span className="text-3xl font-extrabold text-cyan-400 bg-cyan-950/60 border border-cyan-500/30 px-4 py-0.5 rounded-lg min-w-[50px] text-center">
                 {matchState.team2_points}
