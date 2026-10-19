@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePadelScore, ScoreState, DeuceRule } from '@/lib/padelEngine';
-import { RotateCcw, Type, ShieldAlert, Award } from 'lucide-react';
+import { RotateCcw, Type, RefreshCw } from 'lucide-react';
 
 export default function RefereeControl() {
   const params = useParams();
@@ -27,10 +27,37 @@ export default function RefereeControl() {
   const [historyStack, setHistoryStack] = useState<ScoreState[]>([]);
   const [deuceRule, setDeuceRule] = useState<DeuceRule>('golden');
   const [selectedFont, setSelectedFont] = useState('Teko');
-  const [isTournamentPoint, setIsTournamentPoint] = useState(false);
 
-  // Sync perubahan skor ke Supabase
-  const pushStateToSupabase = async (updated: ScoreState, fontName = selectedFont, tourneyPt = isTournamentPoint) => {
+  useEffect(() => {
+    if (!matchId) return;
+    const fetchState = async () => {
+      const { data } = await supabase
+        .from('match_states')
+        .select('*')
+        .eq('match_id', matchId)
+        .single();
+
+      if (data) {
+        setMatchState({
+          team1Points: data.team1_points || '0',
+          team2Points: data.team2_points || '0',
+          team1Games: data.team1_games || [0, 0, 0],
+          team2Games: data.team2_games || [0, 0, 0],
+          currentSet: data.current_set || 0,
+          currentServer: data.current_server || 1,
+          deuceCount: 0,
+          isBreakPoint: data.is_break_point || false,
+          isSetPoint: data.is_set_point || false,
+          isMatchPoint: data.is_match_point || false,
+          isStarPoint: data.is_star_point || false,
+        });
+        if (data.overlay_font) setSelectedFont(data.overlay_font);
+      }
+    };
+    fetchState();
+  }, [matchId]);
+
+  const pushToSupabase = async (updated: ScoreState, fontName = selectedFont) => {
     await supabase
       .from('match_states')
       .update({
@@ -41,7 +68,6 @@ export default function RefereeControl() {
         current_server: updated.currentServer,
         is_break_point: updated.isBreakPoint,
         is_star_point: updated.isStarPoint,
-        is_tournament_point: tourneyPt,
         overlay_font: fontName,
         updated_at: new Date().toISOString(),
       })
@@ -49,12 +75,10 @@ export default function RefereeControl() {
   };
 
   const updateScore = async (scoringTeam: 1 | 2) => {
-    // Simpan ke history stack untuk Undo
     setHistoryStack((prev) => [...prev, JSON.parse(JSON.stringify(matchState))]);
-
     const updated = calculatePadelScore(matchState, scoringTeam, 'traditional', deuceRule);
     setMatchState(updated);
-    await pushStateToSupabase(updated);
+    await pushToSupabase(updated);
   };
 
   const handleUndo = async () => {
@@ -62,21 +86,19 @@ export default function RefereeControl() {
     const previousState = historyStack[historyStack.length - 1];
     setHistoryStack((prev) => prev.slice(0, prev.length - 1));
     setMatchState(previousState);
-    await pushStateToSupabase(previousState);
+    await pushToSupabase(previousState);
   };
 
   const changeFont = async (font: string) => {
     setSelectedFont(font);
-    await pushStateToSupabase(matchState, font);
+    await pushToSupabase(matchState, font);
   };
 
   return (
     <div className="min-h-screen bg-slate-950 text-white p-4 max-w-md mx-auto flex flex-col justify-between select-none">
-      
-      {/* Top Header Controls */}
       <div className="space-y-3">
         <div className="flex justify-between items-center bg-slate-900 p-3 rounded-2xl border border-white/10">
-          <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">WASIT PANEL</span>
+          <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">WASIT DASHBOARD</span>
           <button
             onClick={handleUndo}
             disabled={historyStack.length === 0}
@@ -86,7 +108,6 @@ export default function RefereeControl() {
           </button>
         </div>
 
-        {/* Font Selector untuk OBS Overlay */}
         <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 flex items-center justify-between text-xs">
           <span className="text-slate-400 font-semibold flex items-center gap-1">
             <Type className="w-4 h-4 text-cyan-400" /> OBS Font:
@@ -96,14 +117,13 @@ export default function RefereeControl() {
             onChange={(e) => changeFont(e.target.value)}
             className="bg-slate-950 border border-white/10 text-white rounded-lg px-2 py-1 focus:outline-none"
           >
-            <option value="Teko">Teko (Sporty TV)</option>
+            <option value="Teko">Teko (TV Broadcast)</option>
             <option value="Bebas Neue">Bebas Neue (Bold)</option>
-            <option value="Montserrat">Montserrat (Clean)</option>
-            <option value="Outfit">Outfit (SaaS Modern)</option>
+            <option value="Montserrat">Montserrat (Modern)</option>
+            <option value="Outfit">Outfit (Clean)</option>
           </select>
         </div>
 
-        {/* Pemilih Aturan Deuce */}
         <div className="bg-slate-900/50 p-1.5 rounded-xl border border-white/5 flex gap-2 text-xs">
           <button
             onClick={() => setDeuceRule('golden')}
@@ -124,7 +144,6 @@ export default function RefereeControl() {
         </div>
       </div>
 
-      {/* Main Touch Buttons (+1 Point) */}
       <div className="grid grid-cols-2 gap-4 my-6">
         <button
           onClick={() => updateScore(1)}
@@ -151,16 +170,15 @@ export default function RefereeControl() {
         </button>
       </div>
 
-      {/* Toggle Servis & Status */}
       <div className="bg-slate-900 p-4 rounded-2xl border border-white/10 space-y-3">
         <div className="flex justify-between items-center text-xs">
-          <span className="text-slate-400 font-semibold">Ganti Giliran Servis:</span>
+          <span className="text-slate-400 font-semibold">Giliran Servis:</span>
           <div className="flex gap-2">
             <button
               onClick={() => {
                 const updated = { ...matchState, currentServer: 1 as const };
                 setMatchState(updated);
-                pushStateToSupabase(updated);
+                pushToSupabase(updated);
               }}
               className={`px-3 py-1 rounded-lg font-bold ${matchState.currentServer === 1 ? 'bg-emerald-500 text-black' : 'bg-white/5 text-slate-400'}`}
             >
@@ -170,7 +188,7 @@ export default function RefereeControl() {
               onClick={() => {
                 const updated = { ...matchState, currentServer: 2 as const };
                 setMatchState(updated);
-                pushStateToSupabase(updated);
+                pushToSupabase(updated);
               }}
               className={`px-3 py-1 rounded-lg font-bold ${matchState.currentServer === 2 ? 'bg-cyan-500 text-black' : 'bg-white/5 text-slate-400'}`}
             >
@@ -179,7 +197,6 @@ export default function RefereeControl() {
           </div>
         </div>
       </div>
-
     </div>
   );
 }
