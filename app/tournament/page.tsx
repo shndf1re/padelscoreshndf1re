@@ -105,7 +105,7 @@ export default function TournamentDashboard() {
       )
       .subscribe();
 
-    const intervalId = setInterval(loadActiveTournament, 3000); // Polling backup
+    const intervalId = setInterval(loadActiveTournament, 3000);
 
     return () => {
       supabase.removeChannel(channel);
@@ -125,18 +125,15 @@ export default function TournamentDashboard() {
 
     if (!currentBracket || !currentBracket.next_bracket_id) return;
 
-    // Simpan status pemenang pada bracket saat ini
     await supabase
       .from('brackets')
       .update({ winner_team: winnerTeam })
       .eq('id', currentBracket.id);
 
-    // Ambil data tim pemenang
     const winnerName = winnerTeam === 1 ? currentBracket.team1_name : currentBracket.team2_name;
     const winnerP1 = winnerTeam === 1 ? currentBracket.team1_p1 : currentBracket.team2_p1;
     const winnerP2 = winnerTeam === 1 ? currentBracket.team1_p2 : currentBracket.team2_p2;
 
-    // Masukkan pemenang ke slot babak berikutnya
     const targetSlot = currentBracket.next_slot;
     const updatePayload: any = {};
     if (targetSlot === 1) {
@@ -151,7 +148,6 @@ export default function TournamentDashboard() {
 
     await supabase.from('brackets').update(updatePayload).eq('id', currentBracket.next_bracket_id);
 
-    // Cek apakah slot babak berikutnya sudah terisi kedua timnya
     const { data: nextBracket } = await supabase
       .from('brackets')
       .select('*')
@@ -159,7 +155,6 @@ export default function TournamentDashboard() {
       .single();
 
     if (nextBracket && nextBracket.team1_p1 && nextBracket.team2_p1 && !nextBracket.match_id) {
-      // Buat record match baru untuk Semifinal/Final agar tombol Wasit & OBS aktif
       const { data: newMatch } = await supabase
         .from('matches')
         .insert({
@@ -224,14 +219,15 @@ export default function TournamentDashboard() {
     alert(`Akses Moderator berhasil ditambahkan untuk ${newAdminEmail}`);
   };
 
-  // Membuat Struktur Bracket Lengkap (Quarterfinal, Semifinal, Final) ke Database dengan Error Handling
+  // Membuat Struktur Bracket Lengkap ke Database
   const generateBracket = async () => {
     if (participants.length < 2) return alert('Butuh minimal 2 tim untuk membuat bracket!');
 
-    // 1. Buat Record Turnamen Baru
+    // 1. Buat Record Turnamen Baru (Kirim name dan title sekaligus)
     const { data: newT, error: tErr } = await supabase
       .from('tournaments')
       .insert({
+        name: 'Padel Championship Hub',
         title: 'Padel Championship Hub',
         scoring_mode: scoringMode,
         deuce_rule: deuceRule,
@@ -244,7 +240,7 @@ export default function TournamentDashboard() {
 
     if (tErr || !newT) {
       console.error('Error creating tournament:', tErr);
-      return alert(`Gagal membuat turnamen di database: ${tErr?.message || 'Pastikan SQL Editor di Supabase sudah dijalankan.'}`);
+      return alert(`Gagal membuat turnamen di database: ${tErr?.message || 'Pastikan query SQL di Supabase sudah dijalankan.'}`);
     }
 
     setTournamentId(newT.id);
