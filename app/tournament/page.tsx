@@ -1,22 +1,21 @@
 'use client';
 
 import { useState } from 'react';
-import { Trophy, Users, Award, GitMerge, Plus } from 'lucide-react';
+import { Trophy, Award, GitMerge, Users, Plus } from 'lucide-react';
 
 export default function TournamentDashboard() {
   const [activeTab, setActiveTab] = useState<'standings' | 'bracket'>('standings');
 
-  // Sample Knockout Bracket Data
   const [bracket] = useState([
     {
-      round: 'SEMINAL',
+      round: 'SEMIFINAL',
       matches: [
         { team1: 'Sanyo / Tapia', team2: 'Galan / Lebron', score: '6-4, 6-3', winner: 'Sanyo / Tapia' },
         { team1: 'Chingotto / Paquito', team2: 'Coello / Tapia', score: '3-6, 4-6', winner: 'Coello / Tapia' },
       ],
     },
     {
-      round: 'GRAND FINAL',
+      round: 'FINAL',
       matches: [
         { team1: 'Sanyo / Tapia', team2: 'Coello / Tapia', score: 'Live Match', winner: 'Pending' },
       ],
@@ -25,17 +24,15 @@ export default function TournamentDashboard() {
 
   return (
     <main className="min-h-screen p-4 sm:p-8 max-w-5xl mx-auto space-y-8">
-      {/* Header Turnamen */}
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 border-b border-white/10 pb-6">
         <div>
-          <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">PRO TOURNAMENT ENGINE</span>
+          <span className="text-xs text-emerald-400 font-extrabold uppercase tracking-wider">PADEL TOURNAMENT CENTER</span>
           <h1 className="text-3xl font-extrabold flex items-center gap-3 mt-1">
             <Trophy className="w-8 h-8 text-amber-400" />
-            Padel Championship Center
+            Tournament & Leaderboard
           </h1>
         </div>
 
-        {/* Tab Switcher */}
         <div className="flex bg-slate-900 p-1 rounded-xl border border-white/10 text-xs font-bold">
           <button
             onClick={() => setActiveTab('standings')}
@@ -57,7 +54,6 @@ export default function TournamentDashboard() {
       </div>
 
       {activeTab === 'bracket' ? (
-        /* Visual Knockout Bracket Tree */
         <div className="glass-panel p-6 rounded-3xl space-y-6">
           <h2 className="text-xl font-bold text-cyan-400 flex items-center gap-2">
             <GitMerge className="w-6 h-6" /> Bagan Eliminasi Gugur (Knockout)
@@ -91,10 +87,9 @@ export default function TournamentDashboard() {
           </div>
         </div>
       ) : (
-        /* Standings View */
-        <div className="glass-panel p-6 rounded-3xl">
-          <h2 className="text-xl font-bold text-emerald-400 mb-4">Klasemen Poin Americano / League</h2>
-          <p className="text-slate-400 text-sm">Poin menang/kalah otomatis terhitung secara kualitatif.</p>
+        <div className="glass-panel p-6 rounded-3xl space-y-4">
+          <h2 className="text-xl font-bold text-emerald-400">Klasemen Poin Americano / League</h2>
+          <p className="text-slate-400 text-sm">Hitung otomatis poin akumulasi 16 / 21 setiap round pertandingan.</p>
         </div>
       )}
     </main>
