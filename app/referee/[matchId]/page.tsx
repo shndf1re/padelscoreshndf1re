@@ -1,21 +1,23 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useParams, useRouter } from 'next/navigation';
 import { RotateCcw, Award, ChevronLeft, RefreshCw, Zap } from 'lucide-react';
 
 export default function RefereePanel() {
-  const params = useParams();
-  const matchId = params?.matchId as string;
+  const routeParams = useParams();
+  const rawMatchId = routeParams?.matchId;
+  const matchId = Array.isArray(rawMatchId) ? rawMatchId[0] : rawMatchId || '';
+
   const router = useRouter();
 
   const [match, setMatch] = useState<any>(null);
   const [state, setState] = useState<any>(null);
   const [loading, setLoading] = useState(true);
 
-  // Ambil data pertandingan & status terkini dari Supabase
-  const fetchMatchData = async () => {
+  // Fungsi Fetch Data Pertandingan
+  const fetchMatchData = useCallback(async () => {
     if (!matchId) return;
 
     const { data: matchData } = await supabase
@@ -33,10 +35,12 @@ export default function RefereePanel() {
     if (matchData) setMatch(matchData);
     if (stateData) setState(stateData);
     setLoading(false);
-  };
+  }, [matchId]);
 
   useEffect(() => {
     fetchMatchData();
+
+    if (!matchId) return;
 
     // Listener Realtime Supabase
     const channel = supabase
@@ -53,7 +57,7 @@ export default function RefereePanel() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [matchId]);
+  }, [matchId, fetchMatchData]);
 
   if (loading || !match || !state) {
     return (
@@ -68,18 +72,20 @@ export default function RefereePanel() {
 
   const targetGames = match.games_per_set || 6;
   const totalSets = match.total_sets || 1;
-  const deuceRule = match.deuce_rule || 'golden'; // 'golden', 'advantage', atau 'star'
+  const deuceRule = match.deuce_rule || 'golden';
 
   const currentSet = state.current_set || 0;
   const games1 = state.team1_games?.[currentSet] || 0;
   const games2 = state.team2_games?.[currentSet] || 0;
 
-  // Cek apakah mode Tie-Break aktif (6-6 untuk standard, atau 4-4 untuk Fast4)
-  const isTieBreak = (targetGames === 6 && games1 === 6 && games2 === 6) || (targetGames === 4 && games1 === 4 && games2 === 4);
+  // Cek apakah mode Tie-Break aktif
+  const isTieBreak =
+    (targetGames === 6 && games1 === 6 && games2 === 6) ||
+    (targetGames === 4 && games1 === 4 && games2 === 4);
 
-  // Hitung total poin Tie-Break untuk rotasi servis & pindah tempat
-  const tbP1 = parseInt(state.team1_points) || 0;
-  const tbP2 = parseInt(state.team2_points) || 0;
+  // Total poin Tie-Break untuk indikator rotasi tempat
+  const tbP1 = parseInt(state.team1_points, 10) || 0;
+  const tbP2 = parseInt(state.team2_points, 10) || 0;
   const totalTbPoints = tbP1 + tbP2;
   const isSwitchSideNext = isTieBreak && totalTbPoints > 0 && totalTbPoints % 6 === 0;
 
@@ -89,7 +95,7 @@ export default function RefereePanel() {
 
     let p1 = state.team1_points;
     let p2 = state.team2_points;
-    let deuceCount = state.deuce_count || 0; // Mengacak siklus AD1, AD2, dan Star Point
+    let deuceCount = state.deuce_count || 0;
     let isStarPoint = state.is_star_point || false;
 
     let g1Array = [...(state.team1_games || [0, 0, 0, 0, 0])];
@@ -99,10 +105,10 @@ export default function RefereePanel() {
     let isFinished = false;
     let winnerTeam = 0;
 
-    // --- 1. MODE TIE-BREAK (Poin Angka 1, 2, 3...) ---
+    // --- 1. MODE TIE-BREAK (Poin 1, 2, 3...) ---
     if (isTieBreak) {
-      let score1 = parseInt(p1) || 0;
-      let score2 = parseInt(p2) || 0;
+      let score1 = parseInt(p1, 10) || 0;
+      let score2 = parseInt(p2, 10) || 0;
 
       if (team === 1) score1 += 1;
       else score2 += 1;
@@ -110,7 +116,6 @@ export default function RefereePanel() {
       p1 = score1.toString();
       p2 = score2.toString();
 
-      // Syarat Menang Tie-break: Minimal 7 Poin & Selisih Minimal 2 Poin
       if ((score1 >= 7 && score1 - score2 >= 2) || (score2 >= 7 && score2 - score1 >= 2)) {
         if (score1 > score2) g1Array[currentSet] += 1;
         else g2Array[currentSet] += 1;
@@ -118,7 +123,7 @@ export default function RefereePanel() {
         p1 = '0';
         p2 = '0';
       }
-    } 
+    }
     // --- 2. MODE SKOR TRADISIONAL (15, 30, 40) ---
     else {
       if (team === 1) {
@@ -129,38 +134,45 @@ export default function RefereePanel() {
           if (p2 === '40') {
             if (deuceRule === 'golden') {
               g1Array[currentSet] += 1;
-              p1 = '0'; p2 = '0';
+              p1 = '0';
+              p2 = '0';
             } else if (deuceRule === 'star') {
-              // Mode Star Point (2x AD lalu SP)
               if (deuceCount === 0) {
                 p1 = 'AD1';
               } else if (deuceCount === 1) {
                 p1 = 'AD2';
               } else {
-                // Sudah Star Point -> Siapa dapat poin langsung menang game!
                 g1Array[currentSet] += 1;
-                p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+                p1 = '0';
+                p2 = '0';
+                deuceCount = 0;
+                isStarPoint = false;
               }
             } else {
-              p1 = 'AD'; // Standard Advantage
+              p1 = 'AD';
             }
           } else if (p2 === 'AD' || p2 === 'AD1' || p2 === 'AD2') {
-            // Kembali ke Deuce
-            p1 = '40'; p2 = '40';
+            p1 = '40';
+            p2 = '40';
             if (deuceRule === 'star') {
               deuceCount += 1;
-              if (deuceCount >= 2) isStarPoint = true; // Aktifkan Badge Star Point!
+              if (deuceCount >= 2) isStarPoint = true;
             }
           } else {
             g1Array[currentSet] += 1;
-            p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+            p1 = '0';
+            p2 = '0';
+            deuceCount = 0;
+            isStarPoint = false;
           }
         } else if (p1 === 'AD' || p1 === 'AD1' || p1 === 'AD2') {
           g1Array[currentSet] += 1;
-          p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+          p1 = '0';
+          p2 = '0';
+          deuceCount = 0;
+          isStarPoint = false;
         }
       } else {
-        // Tim 2 Tambah Poin
         if (p2 === '0') p2 = '15';
         else if (p2 === '15') p2 = '30';
         else if (p2 === '30') p2 = '40';
@@ -168,7 +180,8 @@ export default function RefereePanel() {
           if (p1 === '40') {
             if (deuceRule === 'golden') {
               g2Array[currentSet] += 1;
-              p1 = '0'; p2 = '0';
+              p1 = '0';
+              p2 = '0';
             } else if (deuceRule === 'star') {
               if (deuceCount === 0) {
                 p2 = 'AD1';
@@ -176,24 +189,34 @@ export default function RefereePanel() {
                 p2 = 'AD2';
               } else {
                 g2Array[currentSet] += 1;
-                p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+                p1 = '0';
+                p2 = '0';
+                deuceCount = 0;
+                isStarPoint = false;
               }
             } else {
               p2 = 'AD';
             }
           } else if (p1 === 'AD' || p1 === 'AD1' || p1 === 'AD2') {
-            p1 = '40'; p2 = '40';
+            p1 = '40';
+            p2 = '40';
             if (deuceRule === 'star') {
               deuceCount += 1;
               if (deuceCount >= 2) isStarPoint = true;
             }
           } else {
             g2Array[currentSet] += 1;
-            p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+            p1 = '0';
+            p2 = '0';
+            deuceCount = 0;
+            isStarPoint = false;
           }
         } else if (p2 === 'AD' || p2 === 'AD1' || p2 === 'AD2') {
           g2Array[currentSet] += 1;
-          p1 = '0'; p2 = '0'; deuceCount = 0; isStarPoint = false;
+          p1 = '0';
+          p2 = '0';
+          deuceCount = 0;
+          isStarPoint = false;
         }
       }
     }
@@ -306,12 +329,15 @@ export default function RefereePanel() {
             <Award className="w-8 h-8 text-emerald-400 mx-auto" />
             <h2 className="text-sm font-black text-emerald-300 uppercase">PERTANDINGAN SELESAI</h2>
             <p className="text-xs font-bold text-white">
-              PEMENANG: {state.winner_team === 1 ? match.team1_name || `${match.team1_p1_name}/${match.team1_p2_name}` : match.team2_name || `${match.team2_p1_name}/${match.team2_p2_name}`}
+              PEMENANG:{' '}
+              {state.winner_team === 1
+                ? match.team1_name || `${match.team1_p1_name}/${match.team1_p2_name}`
+                : match.team2_name || `${match.team2_p1_name}/${match.team2_p2_name}`}
             </p>
           </div>
         )}
 
-        {/* Badge Indicator STAR POINT / GOLDEN POINT */}
+        {/* Badge Indicator STAR POINT */}
         {state.is_star_point && !state.is_finished && (
           <div className="bg-yellow-500/20 border border-yellow-500/50 p-2.5 rounded-2xl text-center flex items-center justify-center gap-2 text-yellow-300 font-black text-xs">
             <Zap className="w-4 h-4 fill-yellow-300" /> STAR POINT (POIN PENENTU GAME)
@@ -352,7 +378,9 @@ export default function RefereePanel() {
           className="bg-emerald-600 active:bg-emerald-500 disabled:opacity-40 text-white font-extrabold py-10 rounded-3xl text-2xl shadow-2xl border border-emerald-400/30 flex flex-col items-center justify-center gap-1 transition-all active:scale-95"
         >
           <span>POIN TIM 1</span>
-          <span className="text-xs font-medium opacity-80">{match.team1_p1_name} & {match.team1_p2_name}</span>
+          <span className="text-xs font-medium opacity-80">
+            {match.team1_p1_name} & {match.team1_p2_name}
+          </span>
         </button>
 
         <button
@@ -361,13 +389,24 @@ export default function RefereePanel() {
           className="bg-cyan-600 active:bg-cyan-500 disabled:opacity-40 text-white font-extrabold py-10 rounded-3xl text-2xl shadow-2xl border border-cyan-400/30 flex flex-col items-center justify-center gap-1 transition-all active:scale-95"
         >
           <span>POIN TIM 2</span>
-          <span className="text-xs font-medium opacity-80">{match.team2_p1_name} & {match.team2_p2_name}</span>
+          <span className="text-xs font-medium opacity-80">
+            {match.team2_p1_name} & {match.team2_p2_name}
+          </span>
         </button>
       </div>
 
       {/* Info Aturan Ringkas */}
       <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 text-[11px] text-slate-400 text-center space-y-1">
-        <p>Deuce Rule: <span className="text-slate-200 font-bold">{deuceRule === 'star' ? '2x AD ➔ Star Point' : deuceRule === 'advantage' ? 'Advantage' : 'Golden Point'}</span></p>
+        <p>
+          Deuce Rule:{' '}
+          <span className="text-slate-200 font-bold">
+            {deuceRule === 'star'
+              ? '2x AD ➔ Star Point'
+              : deuceRule === 'advantage'
+              ? 'Advantage'
+              : 'Golden Point'}
+          </span>
+        </p>
       </div>
     </main>
   );
