@@ -58,10 +58,10 @@ export default function TournamentDashboard() {
   const [deuceRule, setDeuceRule] = useState<'golden' | 'advantage' | 'star'>('golden');
   
   // Format Presets per Babak
-  const [qfGames, setQfGames] = useState<number>(5); // Default Fixed 5 Games untuk Babak Awal/Grup
+  const [qfGames, setQfGames] = useState<number>(5);
   const [qfSets, setQfSets] = useState<number>(1);
-  const [sfFinalGames, setSfFinalGames] = useState<number>(6); // Default Standard 6 Games untuk Semi/Final
-  const [sfFinalSets, setSfFinalSets] = useState<number>(3); // Default Best of 3 untuk Semi/Final
+  const [sfFinalGames, setSfFinalGames] = useState<number>(6);
+  const [sfFinalSets, setSfFinalSets] = useState<number>(3);
 
   // Tab & Peserta
   const [activeTab, setActiveTab] = useState<'participants' | 'bracket' | 'admins'>('participants');
@@ -141,6 +141,7 @@ export default function TournamentDashboard() {
     setParticipants(participants.filter((_, i) => i !== index));
   };
 
+  // LOGIKA GENERATE BRACKET DINAMIS
   const handleCreateTournament = async () => {
     if (!customTitle.trim()) {
       return alert(lang === 'id' ? 'Isi nama turnamen terlebih dahulu!' : 'Please enter tournament name!');
@@ -169,8 +170,9 @@ export default function TournamentDashboard() {
     if (tErr || !newT) return alert(`Gagal membuat turnamen: ${tErr?.message}`);
 
     const shuffled = [...participants].sort(() => Math.random() - 0.5);
+    const teamCount = participants.length;
 
-    // 1. Slot FINAL (Format Semi/Final)
+    // 1. Buat Match & Slot FINAL
     const { data: finalMatch } = await supabase
       .from('matches')
       .insert({
@@ -186,79 +188,33 @@ export default function TournamentDashboard() {
 
     const { data: finalSlot } = await supabase
       .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'FINAL', match_index: 6, match_id: finalMatch?.id })
+      .insert({ tournament_id: newT.id, round_name: 'FINAL', match_index: 10, match_id: finalMatch?.id })
       .select()
       .single();
 
     if (!finalSlot) return alert('Gagal membuat slot final');
 
-    // 2. Slot SEMIFINAL (Format Semi/Final)
-    const { data: semi1Match } = await supabase
-      .from('matches')
-      .insert({
-        match_type: 'tournament',
-        scoring_mode: scoringMode,
-        deuce_rule: deuceRule,
-        games_per_set: sfFinalGames,
-        total_sets: sfFinalSets,
-        status: 'scheduled',
-      })
-      .select()
-      .single();
+    if (teamCount <= 4) {
+      // --- FORMAT 2 - 4 TIM: HANYA SEMIFINAL & FINAL ---
+      for (let i = 0; i < 2; i++) {
+        const p1 = shuffled[i * 2];
+        const p2 = shuffled[i * 2 + 1];
 
-    const { data: semi2Match } = await supabase
-      .from('matches')
-      .insert({
-        match_type: 'tournament',
-        scoring_mode: scoringMode,
-        deuce_rule: deuceRule,
-        games_per_set: sfFinalGames,
-        total_sets: sfFinalSets,
-        status: 'scheduled',
-      })
-      .select()
-      .single();
-
-    const { data: semi1 } = await supabase
-      .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 4, match_id: semi1Match?.id, next_bracket_id: finalSlot.id, next_slot: 1 })
-      .select()
-      .single();
-
-    const { data: semi2 } = await supabase
-      .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 5, match_id: semi2Match?.id, next_bracket_id: finalSlot.id, next_slot: 2 })
-      .select()
-      .single();
-
-    // 3. Slot QUARTERFINAL (Format Babak Awal / QF)
-    const qfTargets = [
-      { nextId: semi1?.id, slot: 1 },
-      { nextId: semi1?.id, slot: 2 },
-      { nextId: semi2?.id, slot: 1 },
-      { nextId: semi2?.id, slot: 2 },
-    ];
-
-    for (let i = 0; i < 4; i++) {
-      const p1 = shuffled[i * 2];
-      const p2 = shuffled[i * 2 + 1];
-
-      if (p1 && p2) {
         const { data: mData } = await supabase
           .from('matches')
           .insert({
-            team1_name: p1.teamName,
-            team1_p1_name: p1.p1,
-            team1_p2_name: p1.p2,
-            team2_name: p2.teamName,
-            team2_p1_name: p2.p1,
-            team2_p2_name: p2.p2,
+            team1_name: p1?.teamName || '',
+            team1_p1_name: p1?.p1 || '',
+            team1_p2_name: p1?.p2 || '',
+            team2_name: p2?.teamName || '',
+            team2_p1_name: p2?.p1 || '',
+            team2_p2_name: p2?.p2 || '',
             match_type: 'tournament',
             scoring_mode: scoringMode,
             deuce_rule: deuceRule,
             games_per_set: qfGames,
             total_sets: qfSets,
-            status: 'live',
+            status: p1 && p2 ? 'live' : 'scheduled',
           })
           .select()
           .single();
@@ -276,18 +232,117 @@ export default function TournamentDashboard() {
 
           await supabase.from('brackets').insert({
             tournament_id: newT.id,
-            round_name: 'QUARTERFINAL',
+            round_name: 'SEMIFINAL',
             match_index: i,
             match_id: mData.id,
-            team1_name: p1.teamName,
-            team1_p1: p1.p1,
-            team1_p2: p1.p2,
-            team2_name: p2.teamName,
-            team2_p1: p2.p1,
-            team2_p2: p2.p2,
-            next_bracket_id: qfTargets[i].nextId,
-            next_slot: qfTargets[i].slot,
+            team1_name: p1?.teamName || '',
+            team1_p1: p1?.p1 || '',
+            team1_p2: p1?.p2 || '',
+            team2_name: p2?.teamName || '',
+            team2_p1: p2?.p1 || '',
+            team2_p2: p2?.p2 || '',
+            next_bracket_id: finalSlot.id,
+            next_slot: i + 1,
           });
+        }
+      }
+    } else {
+      // --- FORMAT 5 - 8 TIM: QUARTERFINAL, SEMIFINAL & FINAL ---
+      const { data: semi1Match } = await supabase
+        .from('matches')
+        .insert({
+          match_type: 'tournament',
+          scoring_mode: scoringMode,
+          deuce_rule: deuceRule,
+          games_per_set: sfFinalGames,
+          total_sets: sfFinalSets,
+          status: 'scheduled',
+        })
+        .select()
+        .single();
+
+      const { data: semi2Match } = await supabase
+        .from('matches')
+        .insert({
+          match_type: 'tournament',
+          scoring_mode: scoringMode,
+          deuce_rule: deuceRule,
+          games_per_set: sfFinalGames,
+          total_sets: sfFinalSets,
+          status: 'scheduled',
+        })
+        .select()
+        .single();
+
+      const { data: semi1 } = await supabase
+        .from('brackets')
+        .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 4, match_id: semi1Match?.id, next_bracket_id: finalSlot.id, next_slot: 1 })
+        .select()
+        .single();
+
+      const { data: semi2 } = await supabase
+        .from('brackets')
+        .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 5, match_id: semi2Match?.id, next_bracket_id: finalSlot.id, next_slot: 2 })
+        .select()
+        .single();
+
+      const qfTargets = [
+        { nextId: semi1?.id, slot: 1 },
+        { nextId: semi1?.id, slot: 2 },
+        { nextId: semi2?.id, slot: 1 },
+        { nextId: semi2?.id, slot: 2 },
+      ];
+
+      for (let i = 0; i < 4; i++) {
+        const p1 = shuffled[i * 2];
+        const p2 = shuffled[i * 2 + 1];
+
+        if (p1 || p2) {
+          const { data: mData } = await supabase
+            .from('matches')
+            .insert({
+              team1_name: p1?.teamName || '',
+              team1_p1_name: p1?.p1 || '',
+              team1_p2_name: p1?.p2 || '',
+              team2_name: p2?.teamName || '',
+              team2_p1_name: p2?.p1 || '',
+              team2_p2_name: p2?.p2 || '',
+              match_type: 'tournament',
+              scoring_mode: scoringMode,
+              deuce_rule: deuceRule,
+              games_per_set: qfGames,
+              total_sets: qfSets,
+              status: p1 && p2 ? 'live' : 'scheduled',
+            })
+            .select()
+            .single();
+
+          if (mData) {
+            await supabase.from('match_states').insert({
+              match_id: mData.id,
+              team1_points: '0',
+              team2_points: '0',
+              team1_games: [0, 0, 0, 0, 0],
+              team2_games: [0, 0, 0, 0, 0],
+              current_set: 0,
+              current_server: 1,
+            });
+
+            await supabase.from('brackets').insert({
+              tournament_id: newT.id,
+              round_name: 'QUARTERFINAL',
+              match_index: i,
+              match_id: mData.id,
+              team1_name: p1?.teamName || '',
+              team1_p1: p1?.p1 || '',
+              team1_p2: p1?.p2 || '',
+              team2_name: p2?.teamName || '',
+              team2_p1: p2?.p1 || '',
+              team2_p2: p2?.p2 || '',
+              next_bracket_id: qfTargets[i].nextId,
+              next_slot: qfTargets[i].slot,
+            });
+          }
         }
       }
     }
@@ -296,7 +351,6 @@ export default function TournamentDashboard() {
     openTournamentManagement(newT);
   };
 
-  // Simpan Override Format Match Individual
   const saveMatchFormatOverride = async () => {
     if (!editingMatch) return;
 
@@ -610,15 +664,15 @@ export default function TournamentDashboard() {
             </div>
           )}
 
-          {/* TAB BRACKET DENGAN TOMBOL OVERRIDE MATCH FORMAT */}
+          {/* TAB BRACKET DENGAN TAMPILAN DINAMIS */}
           {activeTab === 'bracket' && (
             <div className="glass-panel p-6 rounded-3xl space-y-6 overflow-x-auto">
-              <div className="flex justify-between items-center min-w-[700px]">
+              <div className="flex justify-between items-center min-w-[500px]">
                 <div>
                   <h2 className="text-xl font-bold text-cyan-400 flex items-center gap-2">
                     <GitMerge className="w-6 h-6" /> Bagan Eliminasi Gugur
                   </h2>
-                  <p className="text-xs text-slate-400">Setiap match menggunakan format sesuai babak atau di-override secara manual</p>
+                  <p className="text-xs text-slate-400">Tampilan menyesuaikan babak aktif berdasarkan jumlah tim</p>
                 </div>
               </div>
 
@@ -628,71 +682,124 @@ export default function TournamentDashboard() {
                   <p className="text-xs text-slate-400">Belum ada bracket. Tambahkan peserta dan klik tombol acak bracket.</p>
                 </div>
               ) : (
-                <div className="flex gap-8 items-stretch pt-4 pb-6 min-w-[850px]">
-                  {/* QUARTERFINAL */}
-                  <div className="flex-1 space-y-4">
-                    <div className="text-center bg-cyan-500/10 border border-cyan-500/20 py-2 rounded-xl text-xs font-black text-cyan-400 uppercase tracking-widest">
-                      QUARTERFINAL
-                    </div>
-                    <div className="space-y-4">
-                      {qfBrackets.map((b, idx) => (
-                        <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl relative">
-                          <div className="flex justify-between items-center text-[11px]">
-                            <span className="font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">MATCH #{idx + 1}</span>
-                            <div className="flex items-center gap-1">
-                              {b.matches && (
-                                <button
-                                  onClick={() => {
-                                    setEditingMatch(b.matches);
-                                    setEditGames(b.matches.games_per_set || 5);
-                                    setEditSets(b.matches.total_sets || 1);
-                                    setEditDeuce(b.matches.deuce_rule || 'golden');
-                                  }}
-                                  className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
-                                  title="Edit Format Match Ini"
-                                >
-                                  <Settings2 className="w-3.5 h-3.5" />
-                                </button>
-                              )}
-                              <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
-                                {b.matches?.games_per_set || 5}G / {b.matches?.total_sets || 1}S
-                              </span>
+                <div className="flex gap-8 items-stretch pt-4 pb-6 min-w-[650px]">
+                  {/* QUARTERFINAL (Hanya dirender jika ada minimal 5 tim) */}
+                  {qfBrackets.length > 0 && (
+                    <div className="flex-1 space-y-4">
+                      <div className="text-center bg-cyan-500/10 border border-cyan-500/20 py-2 rounded-xl text-xs font-black text-cyan-400 uppercase tracking-widest">
+                        QUARTERFINAL
+                      </div>
+                      <div className="space-y-4">
+                        {qfBrackets.map((b, idx) => (
+                          <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl relative">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">MATCH #{idx + 1}</span>
+                              <div className="flex items-center gap-1">
+                                {b.matches && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingMatch(b.matches);
+                                      setEditGames(b.matches.games_per_set || 5);
+                                      setEditSets(b.matches.total_sets || 1);
+                                      setEditDeuce(b.matches.deuce_rule || 'golden');
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+                                    title="Edit Format Match Ini"
+                                  >
+                                    <Settings2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
+                                  {b.matches?.games_per_set || 5}G / {b.matches?.total_sets || 1}S
+                                </span>
+                              </div>
                             </div>
+                            <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
+                              <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-emerald-400 font-extrabold' : 'text-slate-300'}`}>
+                                <span>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'TBA'}</span>
+                              </div>
+                              <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-cyan-400 font-extrabold' : 'text-slate-300'}`}>
+                                <span>{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'TBA'}</span>
+                              </div>
+                            </div>
+                            {b.match_id && (
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                                </a>
+                                <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <ExternalLink className="w-3 h-3" /> OBS
+                                </a>
+                              </div>
+                            )}
                           </div>
-                          <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
-                            <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-emerald-400 font-extrabold' : 'text-slate-300'}`}>
-                              <span>{b.team1_p1} / {b.team1_p2}</span>
-                            </div>
-                            <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-cyan-400 font-extrabold' : 'text-slate-300'}`}>
-                              <span>{b.team2_p1} / {b.team2_p2}</span>
-                            </div>
-                          </div>
-                          {b.match_id && (
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <Play className="w-3 h-3 fill-emerald-300" /> Wasit
-                              </a>
-                              <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <ExternalLink className="w-3 h-3" /> OBS
-                              </a>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* SEMIFINAL */}
-                  <div className="flex-1 space-y-4">
-                    <div className="text-center bg-emerald-500/10 border border-emerald-500/20 py-2 rounded-xl text-xs font-black text-emerald-400 uppercase tracking-widest">
-                      SEMIFINAL
+                  {sfBrackets.length > 0 && (
+                    <div className="flex-1 space-y-4">
+                      <div className="text-center bg-emerald-500/10 border border-emerald-500/20 py-2 rounded-xl text-xs font-black text-emerald-400 uppercase tracking-widest">
+                        SEMIFINAL
+                      </div>
+                      <div className="flex flex-col justify-around h-[90%] space-y-6">
+                        {sfBrackets.map((b, idx) => (
+                          <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
+                            <div className="flex justify-between items-center text-[11px]">
+                              <span className="font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">SEMI #{idx + 1}</span>
+                              <div className="flex items-center gap-1">
+                                {b.matches && (
+                                  <button
+                                    onClick={() => {
+                                      setEditingMatch(b.matches);
+                                      setEditGames(b.matches.games_per_set || 6);
+                                      setEditSets(b.matches.total_sets || 3);
+                                      setEditDeuce(b.matches.deuce_rule || 'golden');
+                                    }}
+                                    className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+                                    title="Edit Format Match Ini"
+                                  >
+                                    <Settings2 className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                                <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
+                                  {b.matches?.games_per_set || 6}G / {b.matches?.total_sets || 3}S
+                                </span>
+                              </div>
+                            </div>
+                            <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
+                              <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Pemenang...'}</div>
+                              <div className="border-t border-white/5 pt-1.5">{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Pemenang...'}</div>
+                            </div>
+                            {b.match_id && (
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                                </a>
+                                <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <ExternalLink className="w-3 h-3" /> OBS
+                                </a>
+                              </div>
+                            )}
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <div className="flex flex-col justify-around h-[90%] space-y-6">
-                      {sfBrackets.map((b, idx) => (
-                        <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
-                          <div className="flex justify-between items-center text-[11px]">
-                            <span className="font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">SEMI #{idx + 1}</span>
-                            <div className="flex items-center gap-1">
+                  )}
+
+                  {/* FINAL */}
+                  {finalBrackets.length > 0 && (
+                    <div className="flex-1 space-y-4">
+                      <div className="text-center bg-amber-500/10 border border-amber-500/20 py-2 rounded-xl text-xs font-black text-amber-400 uppercase tracking-widest">
+                        FINAL 🏆
+                      </div>
+                      <div className="flex flex-col justify-center h-[90%]">
+                        {finalBrackets.map((b) => (
+                          <div key={b.id} className="bg-slate-900/90 p-5 rounded-2xl border-2 border-amber-500/40 space-y-3 shadow-2xl">
+                            <div className="flex justify-between items-center">
+                              <span className="text-[11px] font-extrabold text-amber-400">CHAMPIONSHIP MATCH</span>
                               {b.matches && (
                                 <button
                                   onClick={() => {
@@ -707,73 +814,26 @@ export default function TournamentDashboard() {
                                   <Settings2 className="w-3.5 h-3.5" />
                                 </button>
                               )}
-                              <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
-                                {b.matches?.games_per_set || 6}G / {b.matches?.total_sets || 3}S
-                              </span>
                             </div>
-                          </div>
-                          <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
-                            <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Pemenang...'}</div>
-                            <div className="border-t border-white/5 pt-1.5">{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Pemenang...'}</div>
-                          </div>
-                          {b.match_id && (
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <Play className="w-3 h-3 fill-emerald-300" /> Wasit
-                              </a>
-                              <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <ExternalLink className="w-3 h-3" /> OBS
-                              </a>
+                            <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
+                              <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Semifinalist 1...'}</div>
+                              <div className="border-t border-white/5 pt-1.5">{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Semifinalist 2...'}</div>
                             </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-
-                  {/* FINAL */}
-                  <div className="flex-1 space-y-4">
-                    <div className="text-center bg-amber-500/10 border border-amber-500/20 py-2 rounded-xl text-xs font-black text-amber-400 uppercase tracking-widest">
-                      FINAL 🏆
-                    </div>
-                    <div className="flex flex-col justify-center h-[90%]">
-                      {finalBrackets.map((b) => (
-                        <div key={b.id} className="bg-slate-900/90 p-5 rounded-2xl border-2 border-amber-500/40 space-y-3 shadow-2xl">
-                          <div className="flex justify-between items-center">
-                            <span className="text-[11px] font-extrabold text-amber-400">CHAMPIONSHIP MATCH</span>
-                            {b.matches && (
-                              <button
-                                onClick={() => {
-                                  setEditingMatch(b.matches);
-                                  setEditGames(b.matches.games_per_set || 6);
-                                  setEditSets(b.matches.total_sets || 3);
-                                  setEditDeuce(b.matches.deuce_rule || 'golden');
-                                }}
-                                className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
-                                title="Edit Format Match Ini"
-                              >
-                                <Settings2 className="w-3.5 h-3.5" />
-                              </button>
+                            {b.match_id && (
+                              <div className="grid grid-cols-2 gap-2 text-xs">
+                                <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <Play className="w-3 h-3 fill-emerald-300" /> Wasit
+                                </a>
+                                <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
+                                  <ExternalLink className="w-3 h-3" /> OBS
+                                </a>
+                              </div>
                             )}
                           </div>
-                          <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
-                            <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Semifinalist 1...'}</div>
-                            <div className="border-t border-white/5 pt-1.5">{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Semifinalist 2...'}</div>
-                          </div>
-                          {b.match_id && (
-                            <div className="grid grid-cols-2 gap-2 text-xs">
-                              <a href={`/referee/${b.match_id}`} target="_blank" className="bg-emerald-500/20 text-emerald-300 font-bold py-2 rounded-xl border border-emerald-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <Play className="w-3 h-3 fill-emerald-300" /> Wasit
-                              </a>
-                              <a href={`/overlay/${b.match_id}`} target="_blank" className="bg-cyan-500/20 text-cyan-300 font-bold py-2 rounded-xl border border-cyan-500/30 text-center flex items-center justify-center gap-1 text-[11px]">
-                                <ExternalLink className="w-3 h-3" /> OBS
-                              </a>
-                            </div>
-                          )}
-                        </div>
-                      ))}
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
             </div>
