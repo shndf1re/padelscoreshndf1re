@@ -224,12 +224,12 @@ export default function TournamentDashboard() {
     alert(`Akses Moderator berhasil ditambahkan untuk ${newAdminEmail}`);
   };
 
-  // Membuat Struktur Bracket Lengkap (Quarterfinal, Semifinal, Final) ke Database
+  // Membuat Struktur Bracket Lengkap (Quarterfinal, Semifinal, Final) ke Database dengan Error Handling
   const generateBracket = async () => {
     if (participants.length < 2) return alert('Butuh minimal 2 tim untuk membuat bracket!');
 
     // 1. Buat Record Turnamen Baru
-    const { data: newT } = await supabase
+    const { data: newT, error: tErr } = await supabase
       .from('tournaments')
       .insert({
         title: 'Padel Championship Hub',
@@ -242,13 +242,16 @@ export default function TournamentDashboard() {
       .select()
       .single();
 
-    if (!newT) return alert('Gagal membuat turnamen di database.');
-    setTournamentId(newT.id);
+    if (tErr || !newT) {
+      console.error('Error creating tournament:', tErr);
+      return alert(`Gagal membuat turnamen di database: ${tErr?.message || 'Pastikan SQL Editor di Supabase sudah dijalankan.'}`);
+    }
 
+    setTournamentId(newT.id);
     const shuffled = [...participants].sort(() => Math.random() - 0.5);
 
     // 2. Buat Slot Final
-    const { data: finalSlot } = await supabase
+    const { data: finalSlot, error: fErr } = await supabase
       .from('brackets')
       .insert({
         tournament_id: newT.id,
@@ -258,8 +261,13 @@ export default function TournamentDashboard() {
       .select()
       .single();
 
+    if (fErr || !finalSlot) {
+      console.error('Error creating final slot:', fErr);
+      return alert(`Gagal membuat slot final: ${fErr?.message}`);
+    }
+
     // 3. Buat Slot Semifinal (Terhubung ke Final)
-    const { data: semi1 } = await supabase
+    const { data: semi1, error: s1Err } = await supabase
       .from('brackets')
       .insert({
         tournament_id: newT.id,
@@ -271,7 +279,7 @@ export default function TournamentDashboard() {
       .select()
       .single();
 
-    const { data: semi2 } = await supabase
+    const { data: semi2, error: s2Err } = await supabase
       .from('brackets')
       .insert({
         tournament_id: newT.id,
@@ -282,6 +290,10 @@ export default function TournamentDashboard() {
       })
       .select()
       .single();
+
+    if (!semi1 || !semi2) {
+      return alert(`Gagal membuat slot semifinal: ${s1Err?.message || s2Err?.message}`);
+    }
 
     // 4. Buat Match Quarterfinal (Terhubung ke Semifinal)
     const qfTargets = [
