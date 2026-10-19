@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '@/lib/supabaseClient';
 import { calculatePadelScore, ScoreState, DeuceRule } from '@/lib/padelEngine';
-import { RotateCcw, Type } from 'lucide-react';
+import { RotateCcw, Type, Trophy, CheckCircle2 } from 'lucide-react';
 
 export default function RefereeControl() {
   const params = useParams();
@@ -14,8 +14,10 @@ export default function RefereeControl() {
   const [matchState, setMatchState] = useState<ScoreState>({
     team1Points: '0',
     team2Points: '0',
-    team1Games: [0, 0, 0],
-    team2Games: [0, 0, 0],
+    team1Games: [0, 0, 0, 0, 0],
+    team2Games: [0, 0, 0, 0, 0],
+    team1SetsWon: 0,
+    team2SetsWon: 0,
     currentSet: 0,
     currentServer: 1,
     deuceCount: 0,
@@ -23,6 +25,8 @@ export default function RefereeControl() {
     isSetPoint: false,
     isMatchPoint: false,
     isStarPoint: false,
+    isFinished: false,
+    winnerTeam: 0,
   });
 
   const [historyStack, setHistoryStack] = useState<ScoreState[]>([]);
@@ -40,8 +44,10 @@ export default function RefereeControl() {
         setMatchState({
           team1Points: sData.team1_points || '0',
           team2Points: sData.team2_points || '0',
-          team1Games: sData.team1_games || [0, 0, 0],
-          team2Games: sData.team2_games || [0, 0, 0],
+          team1Games: sData.team1_games || [0, 0, 0, 0, 0],
+          team2Games: sData.team2_games || [0, 0, 0, 0, 0],
+          team1SetsWon: sData.team1_sets_won || 0,
+          team2SetsWon: sData.team2_sets_won || 0,
           currentSet: sData.current_set || 0,
           currentServer: sData.current_server || 1,
           deuceCount: 0,
@@ -49,6 +55,8 @@ export default function RefereeControl() {
           isSetPoint: sData.is_set_point || false,
           isMatchPoint: sData.is_match_point || false,
           isStarPoint: sData.is_star_point || false,
+          isFinished: sData.is_finished || false,
+          winnerTeam: sData.winner_team || 0,
         });
         if (sData.overlay_font) setSelectedFont(sData.overlay_font);
       }
@@ -65,10 +73,14 @@ export default function RefereeControl() {
         team2_points: updated.team2Points,
         team1_games: updated.team1Games,
         team2_games: updated.team2Games,
+        team1_sets_won: updated.team1SetsWon,
+        team2_sets_won: updated.team2SetsWon,
         current_set: updated.currentSet,
         current_server: updated.currentServer,
         is_break_point: updated.isBreakPoint,
         is_star_point: updated.isStarPoint,
+        is_finished: updated.isFinished,
+        winner_team: updated.winnerTeam,
         overlay_font: fontName,
         updated_at: new Date().toISOString(),
       })
@@ -76,11 +88,15 @@ export default function RefereeControl() {
   };
 
   const updateScore = async (scoringTeam: 1 | 2) => {
+    if (matchState.isFinished) return;
+
     setHistoryStack((prev) => [...prev, JSON.parse(JSON.stringify(matchState))]);
     const mode = matchInfo?.scoring_mode || 'traditional';
     const deuceRule = matchInfo?.deuce_rule || 'golden';
+    const gamesPerSet = matchInfo?.games_per_set || 6;
+    const totalSets = matchInfo?.total_sets || 3;
 
-    const updated = calculatePadelScore(matchState, scoringTeam, mode, deuceRule as DeuceRule);
+    const updated = calculatePadelScore(matchState, scoringTeam, mode, deuceRule as DeuceRule, gamesPerSet, totalSets);
     setMatchState(updated);
     await syncToSupabase(updated);
   };
@@ -114,6 +130,29 @@ export default function RefereeControl() {
           </button>
         </div>
 
+        {/* Status Match Finished */}
+        {matchState.isFinished && (
+          <div className="bg-amber-500/20 border border-amber-500/40 p-4 rounded-2xl text-center space-y-2">
+            <Trophy className="w-8 h-8 text-amber-400 mx-auto" />
+            <h2 className="text-lg font-bold text-amber-300">MATCH SELESAI!</h2>
+            <p className="text-xs text-slate-300">
+              Pemenang:{' '}
+              <span className="font-bold text-emerald-400">
+                {matchState.winnerTeam === 1
+                  ? matchInfo.team1_name || `${matchInfo.team1_p1_name} / ${matchInfo.team1_p2_name}`
+                  : matchInfo.team2_name || `${matchInfo.team2_p1_name} / ${matchInfo.team2_p2_name}`}
+              </span>
+            </p>
+            <a
+              href={`/match/${matchId}`}
+              target="_blank"
+              className="inline-block bg-amber-500 text-black font-bold px-4 py-2 rounded-xl text-xs mt-2"
+            >
+              Lihat Ringkasan Hasil
+            </a>
+          </div>
+        )}
+
         <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 flex items-center justify-between text-xs">
           <span className="text-slate-400 font-semibold flex items-center gap-1">
             <Type className="w-4 h-4 text-cyan-400" /> OBS Font:
@@ -131,17 +170,32 @@ export default function RefereeControl() {
         </div>
       </div>
 
-      {/* Tombol Tambah Poin Tim A & B */}
-      <div className="grid grid-cols-2 gap-4 my-4">
-        {/* Tim 1 */}
+      {/* Area Skor Per Set */}
+      <div className="bg-slate-900/80 p-3 rounded-2xl border border-white/10 text-xs flex justify-around text-center my-2">
+        <div>
+          <span className="text-[10px] text-slate-500 block uppercase font-bold">Set Sekarang</span>
+          <span className="font-bold text-emerald-400 text-sm">Set {matchState.currentSet + 1}</span>
+        </div>
+        <div className="border-r border-white/10" />
+        <div>
+          <span className="text-[10px] text-slate-500 block uppercase font-bold">Skor Set (A - B)</span>
+          <span className="font-bold text-white text-sm">
+            {matchState.team1SetsWon} - {matchState.team2SetsWon}
+          </span>
+        </div>
+      </div>
+
+      {/* Tombol Skor */}
+      <div className="grid grid-cols-2 gap-4 my-2">
         <button
           onClick={() => updateScore(1)}
-          className="h-72 rounded-3xl bg-slate-900 border-2 border-emerald-500/40 active:border-emerald-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left"
+          disabled={matchState.isFinished}
+          className="h-64 rounded-3xl bg-slate-900 border-2 border-emerald-500/40 active:border-emerald-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
         >
           <div>
             {matchInfo.team1_name && <span className="text-xs font-bold text-emerald-400 uppercase block mb-1">{matchInfo.team1_name}</span>}
-            <p className="text-sm font-semibold text-slate-200">{matchInfo.team1_p1_name}</p>
-            <p className="text-sm font-semibold text-slate-200">{matchInfo.team1_p2_name}</p>
+            <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p1_name}</p>
+            <p className="text-xs font-semibold text-slate-200">{matchInfo.team1_p2_name}</p>
           </div>
           <div className="text-center">
             <span className="text-6xl font-black text-emerald-400 block">{matchState.team1Points}</span>
@@ -149,19 +203,19 @@ export default function RefereeControl() {
           </div>
           <div className="flex justify-between items-center text-xs text-slate-400">
             <span>Games: {matchState.team1Games[matchState.currentSet]}</span>
-            {matchState.currentServer === 1 && <span>🎾 Servis</span>}
+            {matchState.currentServer === 1 && <span>🎾</span>}
           </div>
         </button>
 
-        {/* Tim 2 */}
         <button
           onClick={() => updateScore(2)}
-          className="h-72 rounded-3xl bg-slate-900 border-2 border-cyan-500/40 active:border-cyan-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left"
+          disabled={matchState.isFinished}
+          className="h-64 rounded-3xl bg-slate-900 border-2 border-cyan-500/40 active:border-cyan-500 flex flex-col justify-between p-5 active:scale-95 transition-all shadow-2xl text-left disabled:opacity-40"
         >
           <div>
             {matchInfo.team2_name && <span className="text-xs font-bold text-cyan-400 uppercase block mb-1">{matchInfo.team2_name}</span>}
-            <p className="text-sm font-semibold text-slate-200">{matchInfo.team2_p1_name}</p>
-            <p className="text-sm font-semibold text-slate-200">{matchInfo.team2_p2_name}</p>
+            <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p1_name}</p>
+            <p className="text-xs font-semibold text-slate-200">{matchInfo.team2_p2_name}</p>
           </div>
           <div className="text-center">
             <span className="text-6xl font-black text-cyan-400 block">{matchState.team2Points}</span>
@@ -169,14 +223,13 @@ export default function RefereeControl() {
           </div>
           <div className="flex justify-between items-center text-xs text-slate-400">
             <span>Games: {matchState.team2Games[matchState.currentSet]}</span>
-            {matchState.currentServer === 2 && <span>🎾 Servis</span>}
+            {matchState.currentServer === 2 && <span>🎾</span>}
           </div>
         </button>
       </div>
 
-      {/* Kontrol Servis Manual */}
       <div className="bg-slate-900 p-3 rounded-2xl border border-white/10 flex justify-between items-center text-xs">
-        <span className="text-slate-400 font-semibold">Ganti Giliran Servis:</span>
+        <span className="text-slate-400 font-semibold">Giliran Servis:</span>
         <div className="flex gap-2">
           <button
             onClick={() => {
