@@ -18,6 +18,9 @@ import {
   ArrowLeft,
   Globe,
   Trash2,
+  Settings2,
+  X,
+  Check,
 } from 'lucide-react';
 
 interface Participant {
@@ -49,14 +52,18 @@ export default function TournamentDashboard() {
   const [tournamentsList, setTournamentsList] = useState<TournamentItem[]>([]);
   const [selectedTournament, setSelectedTournament] = useState<TournamentItem | null>(null);
 
-  // Form Buat Turnamen Baru (DEFAULT KOSONG)
+  // Form Buat Turnamen
   const [customTitle, setCustomTitle] = useState('');
   const [scoringMode, setScoringMode] = useState<'traditional' | 'americano16' | 'americano21'>('traditional');
   const [deuceRule, setDeuceRule] = useState<'golden' | 'advantage' | 'star'>('golden');
-  const [gamesPerSet, setGamesPerSet] = useState<number>(5);
-  const [totalSets, setTotalSets] = useState<number>(1);
+  
+  // Format Presets per Babak
+  const [qfGames, setQfGames] = useState<number>(5); // Default Fixed 5 Games untuk Babak Awal/Grup
+  const [qfSets, setQfSets] = useState<number>(1);
+  const [sfFinalGames, setSfFinalGames] = useState<number>(6); // Default Standard 6 Games untuk Semi/Final
+  const [sfFinalSets, setSfFinalSets] = useState<number>(3); // Default Best of 3 untuk Semi/Final
 
-  // Tab & Peserta (DEFAULT KOSONG)
+  // Tab & Peserta
   const [activeTab, setActiveTab] = useState<'participants' | 'bracket' | 'admins'>('participants');
   const [participants, setParticipants] = useState<Participant[]>([]);
 
@@ -68,6 +75,12 @@ export default function TournamentDashboard() {
   const [admins, setAdmins] = useState<{ email: string; role: string }[]>([]);
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [brackets, setBrackets] = useState<any[]>([]);
+
+  // State Modal Quick Edit Format Match
+  const [editingMatch, setEditingMatch] = useState<any | null>(null);
+  const [editGames, setEditGames] = useState<number>(5);
+  const [editSets, setEditSets] = useState<number>(1);
+  const [editDeuce, setEditDeuce] = useState<string>('golden');
 
   const router = useRouter();
 
@@ -83,7 +96,7 @@ export default function TournamentDashboard() {
   const loadBracketForTournament = useCallback(async (tId: string) => {
     const { data: bData } = await supabase
       .from('brackets')
-      .select('*')
+      .select('*, matches(*)')
       .eq('tournament_id', tId)
       .order('match_index', { ascending: true });
 
@@ -107,8 +120,6 @@ export default function TournamentDashboard() {
     setCustomTitle(tournament.title || tournament.name);
     setScoringMode((tournament.scoring_mode as any) || 'traditional');
     setDeuceRule((tournament.deuce_rule as any) || 'golden');
-    setGamesPerSet(tournament.games_per_set || 5);
-    setTotalSets(tournament.total_sets || 1);
     loadBracketForTournament(tournament.id);
     setViewMode('manage');
   };
@@ -130,15 +141,6 @@ export default function TournamentDashboard() {
     setParticipants(participants.filter((_, i) => i !== index));
   };
 
-  const inviteAdmin = () => {
-    if (!newAdminEmail.trim()) return;
-    if (admins.some((a) => a.email === newAdminEmail.trim())) {
-      return alert(lang === 'id' ? 'Email ini sudah menjadi Admin/Moderator!' : 'This email is already an Admin/Moderator!');
-    }
-    setAdmins([...admins, { email: newAdminEmail.trim(), role: 'Moderator' }]);
-    setNewAdminEmail('');
-  };
-
   const handleCreateTournament = async () => {
     if (!customTitle.trim()) {
       return alert(lang === 'id' ? 'Isi nama turnamen terlebih dahulu!' : 'Please enter tournament name!');
@@ -157,8 +159,8 @@ export default function TournamentDashboard() {
         slug: dynamicSlug,
         scoring_mode: scoringMode,
         deuce_rule: deuceRule,
-        games_per_set: gamesPerSet,
-        total_sets: totalSets,
+        games_per_set: qfGames,
+        total_sets: qfSets,
         status: 'active',
       })
       .select()
@@ -168,26 +170,68 @@ export default function TournamentDashboard() {
 
     const shuffled = [...participants].sort(() => Math.random() - 0.5);
 
+    // 1. Slot FINAL (Format Semi/Final)
+    const { data: finalMatch } = await supabase
+      .from('matches')
+      .insert({
+        match_type: 'tournament',
+        scoring_mode: scoringMode,
+        deuce_rule: deuceRule,
+        games_per_set: sfFinalGames,
+        total_sets: sfFinalSets,
+        status: 'scheduled',
+      })
+      .select()
+      .single();
+
     const { data: finalSlot } = await supabase
       .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'FINAL', match_index: 6 })
+      .insert({ tournament_id: newT.id, round_name: 'FINAL', match_index: 6, match_id: finalMatch?.id })
       .select()
       .single();
 
     if (!finalSlot) return alert('Gagal membuat slot final');
 
+    // 2. Slot SEMIFINAL (Format Semi/Final)
+    const { data: semi1Match } = await supabase
+      .from('matches')
+      .insert({
+        match_type: 'tournament',
+        scoring_mode: scoringMode,
+        deuce_rule: deuceRule,
+        games_per_set: sfFinalGames,
+        total_sets: sfFinalSets,
+        status: 'scheduled',
+      })
+      .select()
+      .single();
+
+    const { data: semi2Match } = await supabase
+      .from('matches')
+      .insert({
+        match_type: 'tournament',
+        scoring_mode: scoringMode,
+        deuce_rule: deuceRule,
+        games_per_set: sfFinalGames,
+        total_sets: sfFinalSets,
+        status: 'scheduled',
+      })
+      .select()
+      .single();
+
     const { data: semi1 } = await supabase
       .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 4, next_bracket_id: finalSlot.id, next_slot: 1 })
+      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 4, match_id: semi1Match?.id, next_bracket_id: finalSlot.id, next_slot: 1 })
       .select()
       .single();
 
     const { data: semi2 } = await supabase
       .from('brackets')
-      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 5, next_bracket_id: finalSlot.id, next_slot: 2 })
+      .insert({ tournament_id: newT.id, round_name: 'SEMIFINAL', match_index: 5, match_id: semi2Match?.id, next_bracket_id: finalSlot.id, next_slot: 2 })
       .select()
       .single();
 
+    // 3. Slot QUARTERFINAL (Format Babak Awal / QF)
     const qfTargets = [
       { nextId: semi1?.id, slot: 1 },
       { nextId: semi1?.id, slot: 2 },
@@ -212,8 +256,8 @@ export default function TournamentDashboard() {
             match_type: 'tournament',
             scoring_mode: scoringMode,
             deuce_rule: deuceRule,
-            games_per_set: gamesPerSet,
-            total_sets: totalSets,
+            games_per_set: qfGames,
+            total_sets: qfSets,
             status: 'live',
           })
           .select()
@@ -252,6 +296,23 @@ export default function TournamentDashboard() {
     openTournamentManagement(newT);
   };
 
+  // Simpan Override Format Match Individual
+  const saveMatchFormatOverride = async () => {
+    if (!editingMatch) return;
+
+    await supabase
+      .from('matches')
+      .update({
+        games_per_set: editGames,
+        total_sets: editSets,
+        deuce_rule: editDeuce,
+      })
+      .eq('id', editingMatch.id);
+
+    setEditingMatch(null);
+    if (selectedTournament) loadBracketForTournament(selectedTournament.id);
+  };
+
   const qfBrackets = brackets.filter((b) => b.round_name === 'QUARTERFINAL');
   const sfBrackets = brackets.filter((b) => b.round_name === 'SEMIFINAL');
   const finalBrackets = brackets.filter((b) => b.round_name === 'FINAL');
@@ -271,7 +332,6 @@ export default function TournamentDashboard() {
         </div>
 
         <div className="flex items-center gap-3">
-          {/* Saklar Bahasa */}
           <div className="flex items-center bg-slate-900 border border-white/10 p-1 rounded-xl text-xs">
             <Globe className="w-3.5 h-3.5 text-slate-400 ml-2 mr-1" />
             <button
@@ -391,19 +451,13 @@ export default function TournamentDashboard() {
               >
                 {t.tabBracket}
               </button>
-              <button
-                onClick={() => setActiveTab('admins')}
-                className={`px-4 py-2 rounded-xl ${activeTab === 'admins' ? 'bg-amber-500 text-black' : 'text-slate-400'}`}
-              >
-                {t.tabAdmins}
-              </button>
             </div>
           </div>
 
           {activeTab === 'participants' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="space-y-6">
-                {/* Form Nama Turnamen */}
+                {/* Form Nama Turnamen & Format Preset Per Babak */}
                 <div className="glass-panel p-6 rounded-3xl space-y-4 border border-amber-500/30">
                   <h2 className="text-base font-bold flex items-center gap-2 text-amber-400">
                     <Trophy className="w-5 h-5" /> {t.tournamentName}
@@ -416,30 +470,63 @@ export default function TournamentDashboard() {
                     className="w-full bg-slate-900 border border-white/10 rounded-xl p-3 text-xs text-white placeholder-slate-600 focus:outline-none"
                   />
 
-                  <div className="grid grid-cols-2 gap-2 text-xs">
-                    <div>
-                      <label className="text-slate-400 block mb-1 font-semibold">{t.gamesPerSet}</label>
-                      <select
-                        value={gamesPerSet}
-                        onChange={(e) => setGamesPerSet(Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-medium"
-                      >
-                        <option value={5}>Fixed 5 Games (5-0 / 4-1 / 3-2)</option>
-                        <option value={6}>6 Games (Standard)</option>
-                        <option value={4}>4 Games (Fast4)</option>
-                      </select>
+                  {/* PRESET BABAK AWAL / GRUP */}
+                  <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 space-y-2 text-xs">
+                    <span className="font-bold text-cyan-400 block text-[11px] uppercase">Format Babak Awal / QF</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-slate-400 block mb-1 text-[10px]">Games/Set</label>
+                        <select
+                          value={qfGames}
+                          onChange={(e) => setQfGames(Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-white font-medium"
+                        >
+                          <option value={5}>Fixed 5 Games</option>
+                          <option value={6}>6 Games (Standard)</option>
+                          <option value={4}>4 Games (Fast4)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1 text-[10px]">Total Set</label>
+                        <select
+                          value={qfSets}
+                          onChange={(e) => setQfSets(Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-white font-medium"
+                        >
+                          <option value={1}>1 Set (Pro Set)</option>
+                          <option value={3}>Best of 3 Sets</option>
+                        </select>
+                      </div>
                     </div>
+                  </div>
 
-                    <div>
-                      <label className="text-slate-400 block mb-1 font-semibold">{t.totalSets}</label>
-                      <select
-                        value={totalSets}
-                        onChange={(e) => setTotalSets(Number(e.target.value))}
-                        className="w-full bg-slate-900 border border-white/10 rounded-xl p-2.5 text-white font-medium"
-                      >
-                        <option value={1}>1 Set Saja (Pro Set)</option>
-                        <option value={3}>Best of 3 Sets</option>
-                      </select>
+                  {/* PRESET SEMIFINAL & FINAL */}
+                  <div className="bg-slate-900/60 p-3 rounded-2xl border border-white/5 space-y-2 text-xs">
+                    <span className="font-bold text-amber-400 block text-[11px] uppercase">Format Semifinal & Final</span>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div>
+                        <label className="text-slate-400 block mb-1 text-[10px]">Games/Set</label>
+                        <select
+                          value={sfFinalGames}
+                          onChange={(e) => setSfFinalGames(Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-white font-medium"
+                        >
+                          <option value={6}>6 Games (Standard)</option>
+                          <option value={5}>Fixed 5 Games</option>
+                          <option value={4}>4 Games (Fast4)</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-slate-400 block mb-1 text-[10px]">Total Set</label>
+                        <select
+                          value={sfFinalSets}
+                          onChange={(e) => setSfFinalSets(Number(e.target.value))}
+                          className="w-full bg-slate-950 border border-white/10 rounded-xl p-2 text-white font-medium"
+                        >
+                          <option value={3}>Best of 3 Sets</option>
+                          <option value={1}>1 Set (Pro Set)</option>
+                        </select>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -523,7 +610,7 @@ export default function TournamentDashboard() {
             </div>
           )}
 
-          {/* TAB BRACKET */}
+          {/* TAB BRACKET DENGAN TOMBOL OVERRIDE MATCH FORMAT */}
           {activeTab === 'bracket' && (
             <div className="glass-panel p-6 rounded-3xl space-y-6 overflow-x-auto">
               <div className="flex justify-between items-center min-w-[700px]">
@@ -531,7 +618,7 @@ export default function TournamentDashboard() {
                   <h2 className="text-xl font-bold text-cyan-400 flex items-center gap-2">
                     <GitMerge className="w-6 h-6" /> Bagan Eliminasi Gugur
                   </h2>
-                  <p className="text-xs text-slate-400">Pemenang match otomatis maju ke babak selanjutnya</p>
+                  <p className="text-xs text-slate-400">Setiap match menggunakan format sesuai babak atau di-override secara manual</p>
                 </div>
               </div>
 
@@ -549,19 +636,35 @@ export default function TournamentDashboard() {
                     </div>
                     <div className="space-y-4">
                       {qfBrackets.map((b, idx) => (
-                        <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
+                        <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl relative">
                           <div className="flex justify-between items-center text-[11px]">
                             <span className="font-bold text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded">MATCH #{idx + 1}</span>
-                            {b.winner_team > 0 && <span className="text-[10px] bg-emerald-500/20 text-emerald-300 font-extrabold px-2 py-0.5 rounded">SELESAI</span>}
+                            <div className="flex items-center gap-1">
+                              {b.matches && (
+                                <button
+                                  onClick={() => {
+                                    setEditingMatch(b.matches);
+                                    setEditGames(b.matches.games_per_set || 5);
+                                    setEditSets(b.matches.total_sets || 1);
+                                    setEditDeuce(b.matches.deuce_rule || 'golden');
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+                                  title="Edit Format Match Ini"
+                                >
+                                  <Settings2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
+                                {b.matches?.games_per_set || 5}G / {b.matches?.total_sets || 1}S
+                              </span>
+                            </div>
                           </div>
                           <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
                             <div className={`flex justify-between items-center ${b.winner_team === 1 ? 'text-emerald-400 font-extrabold' : 'text-slate-300'}`}>
                               <span>{b.team1_p1} / {b.team1_p2}</span>
-                              {b.winner_team === 1 && <span>🏆</span>}
                             </div>
                             <div className={`border-t border-white/5 pt-1.5 flex justify-between items-center ${b.winner_team === 2 ? 'text-cyan-400 font-extrabold' : 'text-slate-300'}`}>
                               <span>{b.team2_p1} / {b.team2_p2}</span>
-                              {b.winner_team === 2 && <span>🏆</span>}
                             </div>
                           </div>
                           {b.match_id && (
@@ -589,6 +692,25 @@ export default function TournamentDashboard() {
                         <div key={b.id} className="bg-slate-900/90 p-4 rounded-2xl border border-white/10 space-y-3 shadow-xl">
                           <div className="flex justify-between items-center text-[11px]">
                             <span className="font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded">SEMI #{idx + 1}</span>
+                            <div className="flex items-center gap-1">
+                              {b.matches && (
+                                <button
+                                  onClick={() => {
+                                    setEditingMatch(b.matches);
+                                    setEditGames(b.matches.games_per_set || 6);
+                                    setEditSets(b.matches.total_sets || 3);
+                                    setEditDeuce(b.matches.deuce_rule || 'golden');
+                                  }}
+                                  className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+                                  title="Edit Format Match Ini"
+                                >
+                                  <Settings2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
+                              <span className="text-[10px] bg-slate-800 text-slate-300 font-semibold px-2 py-0.5 rounded">
+                                {b.matches?.games_per_set || 6}G / {b.matches?.total_sets || 3}S
+                              </span>
+                            </div>
                           </div>
                           <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
                             <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Pemenang...'}</div>
@@ -617,7 +739,23 @@ export default function TournamentDashboard() {
                     <div className="flex flex-col justify-center h-[90%]">
                       {finalBrackets.map((b) => (
                         <div key={b.id} className="bg-slate-900/90 p-5 rounded-2xl border-2 border-amber-500/40 space-y-3 shadow-2xl">
-                          <div className="text-[11px] font-extrabold text-amber-400">CHAMPIONSHIP MATCH</div>
+                          <div className="flex justify-between items-center">
+                            <span className="text-[11px] font-extrabold text-amber-400">CHAMPIONSHIP MATCH</span>
+                            {b.matches && (
+                              <button
+                                onClick={() => {
+                                  setEditingMatch(b.matches);
+                                  setEditGames(b.matches.games_per_set || 6);
+                                  setEditSets(b.matches.total_sets || 3);
+                                  setEditDeuce(b.matches.deuce_rule || 'golden');
+                                }}
+                                className="p-1 text-slate-400 hover:text-white bg-slate-800 rounded-lg"
+                                title="Edit Format Match Ini"
+                              >
+                                <Settings2 className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                          </div>
                           <div className="space-y-1.5 bg-slate-950 p-3 rounded-xl border border-white/5 text-xs font-semibold">
                             <div>{b.team1_p1 ? `${b.team1_p1} / ${b.team1_p2}` : 'Menunggu Semifinalist 1...'}</div>
                             <div className="border-t border-white/5 pt-1.5">{b.team2_p1 ? `${b.team2_p1} / ${b.team2_p2}` : 'Menunggu Semifinalist 2...'}</div>
@@ -640,48 +778,69 @@ export default function TournamentDashboard() {
               )}
             </div>
           )}
+        </div>
+      )}
 
-          {/* TAB ADMIN */}
-          {activeTab === 'admins' && (
-            <div className="glass-panel p-6 sm:p-8 rounded-3xl space-y-6 max-w-xl mx-auto">
+      {/* MODAL QUICK EDIT FORMAT MATCH */}
+      {editingMatch && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 z-50">
+          <div className="bg-slate-900 border border-white/10 p-6 rounded-3xl max-w-sm w-full space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-white/10 pb-3">
+              <h3 className="text-sm font-bold text-white flex items-center gap-2">
+                <Settings2 className="w-4 h-4 text-cyan-400" /> Override Format Match
+              </h3>
+              <button onClick={() => setEditingMatch(null)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
               <div>
-                <h2 className="text-lg font-bold text-amber-400 flex items-center gap-2">
-                  <UserPlus className="w-5 h-5" /> Undang Admin & Moderator
-                </h2>
-                <p className="text-xs text-slate-400 mt-1">
-                  Pengelola yang diundang dapat mengakses panel wasit tanpa mengubah pengaturan turnamen.
-                </p>
-              </div>
-
-              <div className="flex gap-2">
-                <input
-                  type="email"
-                  placeholder="email.wasit@padel.com"
-                  value={newAdminEmail}
-                  onChange={(e) => setNewAdminEmail(e.target.value)}
-                  className="flex-1 bg-slate-900 border border-white/10 rounded-xl px-3 py-2.5 text-xs text-white focus:outline-none"
-                />
-                <button
-                  onClick={inviteAdmin}
-                  className="bg-amber-500 hover:bg-amber-400 text-black font-bold px-4 py-2.5 rounded-xl text-xs transition-all"
+                <label className="text-slate-400 block mb-1">Games / Set</label>
+                <select
+                  value={editGames}
+                  onChange={(e) => setEditGames(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-white"
                 >
-                  Kirim Akses
-                </button>
+                  <option value={5}>Fixed 5 Games (5-0 / 4-1 / 3-2)</option>
+                  <option value={6}>6 Games (Standard)</option>
+                  <option value={4}>4 Games (Fast4)</option>
+                </select>
               </div>
 
-              <div className="space-y-2 pt-2">
-                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block">Daftar Pengelola Turnamen</span>
-                {admins.map((adm, idx) => (
-                  <div key={idx} className="bg-slate-900/80 p-3.5 rounded-xl border border-white/5 text-xs flex justify-between items-center">
-                    <span className="text-slate-200 font-medium">{adm.email}</span>
-                    <span className={`text-[10px] px-2.5 py-1 rounded-md font-bold uppercase ${adm.role === 'Owner' ? 'bg-amber-500/20 text-amber-300 border border-amber-500/30' : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'}`}>
-                      {adm.role}
-                    </span>
-                  </div>
-                ))}
+              <div>
+                <label className="text-slate-400 block mb-1">Total Set</label>
+                <select
+                  value={editSets}
+                  onChange={(e) => setEditSets(Number(e.target.value))}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-white"
+                >
+                  <option value={1}>1 Set (Pro Set)</option>
+                  <option value={3}>Best of 3 Sets</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-slate-400 block mb-1">Aturan Deuce</label>
+                <select
+                  value={editDeuce}
+                  onChange={(e) => setEditDeuce(e.target.value)}
+                  className="w-full bg-slate-950 border border-white/10 rounded-xl p-2.5 text-white"
+                >
+                  <option value="golden">Golden Point</option>
+                  <option value="star">2x AD ➔ Star Point</option>
+                  <option value="advantage">Advantage</option>
+                </select>
               </div>
             </div>
-          )}
+
+            <button
+              onClick={saveMatchFormatOverride}
+              className="w-full bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold p-3 rounded-xl text-xs flex items-center justify-center gap-1.5 transition-all"
+            >
+              <Check className="w-4 h-4" /> Simpan Format Baru
+            </button>
+          </div>
         </div>
       )}
     </main>
